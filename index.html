@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orbit Imager</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='9' fill='%233f8fd2'/><ellipse cx='16' cy='16' rx='15' ry='5' fill='none' stroke='%23ffd166' stroke-width='2' transform='rotate(-25 16 16)'/></svg>" />
+  <!-- Pinned CDN versions: bump deliberately, never use @latest (see docs/decisions.md) -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/",
+        "topojson-client": "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/+esm",
+        "d3-geo": "https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/+esm"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+        <circle cx="16" cy="16" r="9" fill="#3f8fd2" />
+        <path d="M11 13c2-2 5-1 6 1s4 2 5 0" stroke="#7dbb57" stroke-width="3" fill="none" stroke-linecap="round" />
+        <ellipse cx="16" cy="16" rx="15" ry="5" fill="none" stroke="#ffd166" stroke-width="1.6" transform="rotate(-25 16 16)" />
+        <rect x="26" y="6" width="4" height="4" rx="1" fill="#ffd166" />
+      </svg>
+      <span class="brand-name">Orbit Imager</span>
+      <span class="brand-tag">v0</span>
+    </div>
+    <div class="controls">
+      <button id="play" class="icon-btn" aria-label="Pause" title="Play / pause (space)">
+        <svg class="i-pause" viewBox="0 0 24 24" width="18" height="18"><rect x="6" y="5" width="4" height="14" rx="1.5" /><rect x="14" y="5" width="4" height="14" rx="1.5" /></svg>
+        <svg class="i-play" viewBox="0 0 24 24" width="18" height="18"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" /></svg>
+      </button>
+      <div id="warp" class="segmented" role="group" aria-label="Time warp"></div>
+      <button id="now" class="text-btn" title="Jump sim clock to the current real time">Now</button>
+      <label class="toggle" title="Camera follows the satellite">
+        <input type="checkbox" id="follow" />
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        Follow
+      </label>
+    </div>
+  </header>
+
+  <main class="views">
+    <section class="panel panel-globe">
+      <div class="panel-label">3D view <span class="hint">drag to rotate · scroll to zoom</span></div>
+      <div id="globe" class="globe-host"></div>
+    </section>
+    <div class="side">
+      <section class="panel panel-map">
+        <div class="panel-label">Ground track <span class="hint"><i class="sw sw-past"></i>last orbit <i class="sw sw-future"></i>next orbit</span></div>
+        <div class="map-host"><canvas id="map"></canvas></div>
+        <div id="status" class="status">Loading map data…</div>
+      </section>
+      <section id="hud" class="panel hud" aria-live="off"></section>
+    </div>
+  </main>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

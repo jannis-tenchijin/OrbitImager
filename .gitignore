@@ -1,0 +1,16 @@
+# macOS / editors
+.DS_Store
+.vscode/
+*.swp
+
+# Python (local server, helper scripts)
+__pycache__/
+*.pyc
+.venv/
+
+# Secrets — never commit API keys
+.env
+*.key
+
+# Claude Code per-user settings (shared config like launch.json and skills IS committed)
+.claude/settings.local.json
