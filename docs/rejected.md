@@ -18,3 +18,12 @@ Things we considered and dropped. Format: `## Title (YYYY-MM-DD)` + **Why reject
 
 ## Real-scale satellite model (2026-10-02)
 **Why rejected:** A ~5 m satellite at 700 km altitude is sub-pixel at any useful zoom. Model is exaggerated on purpose (see decisions.md).
+
+## Light-grey cloud-mask hatch (2026-10-02)
+**Why rejected:** Indistinguishable from the white cloud blobs on the map. Replaced with dark slate + light stripes (`cloudMask` / `cloudMaskHatch`).
+
+## Coverage by "any touched grid cell" (2026-10-02)
+**Why rejected:** Biased high (dilates each stripe by ~half a grid cell per side): 24.5% vs a 21.9% physical ceiling. See decisions.md (*grid-cell centers*).
+
+## Recomputing the past swath every frame (2026-10-02)
+**Why rejected:** Can't represent what was seen at acquisition time (moving clouds, FOV changes). Replaced by the swath recorder.

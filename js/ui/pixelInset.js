@@ -2,6 +2,17 @@
 // The scene is drawn twice with identical geometry: once in visual RGB, once as a grayscale
 // temperature map (canvas anti-aliasing then blends temperatures = realistic mixed pixels).
 // Recorded pixels are box averages of the ground truth, computed with summed-area tables.
+//
+// Acquisition animation (slow motion, loops):
+//   pushbroom  - one full cross-track row appears at once, row after row.
+//   whiskbroom - a k-row spot sweeps left -> right (pixel by pixel), then the mirror spends the
+//                rest of its turn on calibration; the next sweep starts exactly k rows further
+//                down, so there is no gap.
+
+const PUSH_FILL_S = 5;        // real seconds to fill the scene (pushbroom)
+const WHISK_SWEEP_S = 0.7;    // real seconds per visible sweep (readability)
+const WHISK_CAL_MAX_S = 1.2;  // calibration pause is true-to-ratio up to this cap
+const HOLD_S = 1.5;           // pause on the finished image before looping
 
 const LEAK = { x: 1985, y: 1460, r: 22 }; // cool wet-soil patch next to a road (m)
 
@@ -141,6 +152,9 @@ export class PixelInset {
     this.ramp = buildRamp(palette.thermalRamp);
     this.mode = 'thermal';
     this.gsdM = 100;
+    this.scan = 'pushbroom';
+    this.timing = null;
+    this.animT = 0;
     this.buildTruth();
     new ResizeObserver(() => this.resize()).observe(host);
     this.resize();
@@ -219,16 +233,55 @@ export class PixelInset {
     return c;
   }
 
-  /** mode: 'thermal' | 'visual'; gsdM: current nadir GSD in meters. */
-  set(mode, gsdM) {
-    if (mode === this.mode && Math.abs(gsdM - this.gsdM) < 1e-6 && this.recorded) return;
-    this.mode = mode;
-    this.gsdM = gsdM;
-    const { sizeM, texelM } = this.cfg;
-    const step = gsdM / texelM; // texels per recorded pixel
-    this.pixelsAcross = Math.ceil(sizeM / gsdM);
-    this.recorded = step <= 1 ? null : this.renderGrid(step, this.pixelsAcross);
+  /**
+   * mode: 'thermal' | 'visual'; gsdM: nadir GSD (m); timing: sensorGeometry().timing.
+   * Any change restarts the acquisition animation.
+   */
+  set(mode, gsdM, timing) {
+    const sameImage = mode === this.mode && Math.abs(gsdM - this.gsdM) < 1e-6 && this.pixelsAcross;
+    this.timing = timing;
+    this.scan = timing?.scan ?? 'pushbroom';
+    this.animT = 0;
+    if (!sameImage) {
+      this.mode = mode;
+      this.gsdM = gsdM;
+      const { sizeM, texelM } = this.cfg;
+      const step = gsdM / texelM; // texels per recorded pixel
+      this.pixelsAcross = Math.ceil(sizeM / gsdM);
+      this.recorded = step <= 1 ? null : this.renderGrid(step, this.pixelsAcross);
+    }
     this.draw();
+  }
+
+  /** Advance the acquisition animation by dtS real seconds. */
+  tick(dtS) {
+    this.animT += dtS;
+    this.draw();
+  }
+
+  /**
+   * Where the acquisition is at animT: rows fully done, the active group being swept,
+   * columns done in that group, and whether the whisk mirror is calibrating.
+   */
+  acquisitionState() {
+    const rows = this.pixelsAcross;
+    if (this.scan !== 'whiskbroom') {
+      if (this.animT > PUSH_FILL_S + HOLD_S) this.animT = 0;
+      const done = Math.min(rows, Math.floor((this.animT / PUSH_FILL_S) * rows));
+      return { doneRows: done, g0: done, g1: done, cols: 0, calibrating: false, finished: done >= rows };
+    }
+    const k = this.timing.rowsPerSweep, eta = this.timing.earthViewFrac;
+    const cal = Math.min(WHISK_CAL_MAX_S, (WHISK_SWEEP_S * (1 - eta)) / eta);
+    this.calCapped = (WHISK_SWEEP_S * (1 - eta)) / eta > WHISK_CAL_MAX_S;
+    const cycle = WHISK_SWEEP_S + cal;
+    const sweeps = Math.ceil(rows / k);
+    if (this.animT > sweeps * cycle + HOLD_S) this.animT = 0;
+    const idx = Math.min(sweeps, Math.floor(this.animT / cycle));
+    if (idx >= sweeps) return { doneRows: rows, g0: rows, g1: rows, cols: 0, calibrating: false, finished: true };
+    const f = this.animT - idx * cycle;
+    const g0 = idx * k, g1 = Math.min(rows, g0 + k);
+    if (f >= WHISK_SWEEP_S) return { doneRows: g1, g0: g1, g1, cols: 0, calibrating: true, finished: false };
+    return { doneRows: g0, g0, g1, cols: Math.floor((f / WHISK_SWEEP_S) * rows), calibrating: false, finished: false };
   }
 
   resize() {
@@ -241,6 +294,33 @@ export class PixelInset {
     this.canvas.style.height = `${h}px`;
     this.dpr = dpr;
     this.draw();
+  }
+
+  /** Bright marker for what the detectors see right now, on both views. */
+  drawFootprint(ctx, acq, xs, top, S, px) {
+    if (acq.finished || acq.calibrating) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 8;
+    for (const ox of xs) {
+      ctx.save(); // clip per view (clips intersect otherwise)
+      ctx.beginPath();
+      ctx.rect(ox, top, S, S);
+      ctx.clip();
+      if (this.scan === 'whiskbroom') {
+        // k-row tall spot at the mirror's current column + faint band for the whole sweep
+        ctx.globalAlpha = 0.18;
+        ctx.fillRect(ox, top + acq.g0 * px, S, (acq.g1 - acq.g0) * px);
+        ctx.globalAlpha = 1;
+        ctx.fillRect(ox + acq.cols * px, top + acq.g0 * px, Math.max(2, px), (acq.g1 - acq.g0) * px);
+      } else {
+        // Whole detector line across the scene
+        ctx.fillRect(ox, top + acq.doneRows * px, S, Math.max(2, px));
+      }
+      ctx.restore();
+    }
+    ctx.restore();
   }
 
   draw() {
@@ -267,10 +347,15 @@ export class PixelInset {
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(this.truthImg[this.mode], x0, top, S, S);
 
-    // Recorded: nearest-neighbor upscale, clipped to the scene window
+    // Recorded: nearest-neighbor upscale, revealed as the acquisition progresses
+    const acq = this.acquisitionState();
+    const px = (this.gsdM / sizeM) * S;
+    ctx.fillStyle = '#0d1330';
+    ctx.fillRect(x1, top, S, S);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(x1, top, S, S);
+    ctx.rect(x1, top, S, Math.min(S, acq.doneRows * px));
+    if (acq.cols) ctx.rect(x1, top + acq.g0 * px, Math.min(S, acq.cols * px), (acq.g1 - acq.g0) * px);
     ctx.clip();
     if (this.recorded) {
       ctx.imageSmoothingEnabled = false;
@@ -294,6 +379,7 @@ export class PixelInset {
       ctx.drawImage(this.truthImg[this.mode], x1, top, S, S);
     }
     ctx.restore();
+    this.drawFootprint(ctx, acq, [x0, x1], top, S, px);
 
     // Leak annotation on both views
     for (const ox of [x0, x1]) {
@@ -311,6 +397,17 @@ export class PixelInset {
     ctx.textBaseline = 'middle';
     ctx.fillText('leak', x0 + (LEAK.x / sizeM) * S + 10, top + (LEAK.y / sizeM) * S - 12);
 
+    // Whiskbroom calibration notice (true share of the mirror cycle)
+    if (acq.calibrating) {
+      const pct = Math.round((1 - this.timing.earthViewFrac) * 100);
+      ctx.fillStyle = 'rgba(11, 16, 38, 0.82)';
+      ctx.fillRect(x1 + 6, top + S - 26, S - 12, 20);
+      ctx.fillStyle = '#ffb27a';
+      ctx.font = '600 10.5px system-ui, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`calibrating · ${pct}% of mirror cycle${this.calCapped ? ' (shortened)' : ''}`, x1 + 12, top + S - 16);
+    }
+
     // Frames
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
     ctx.strokeRect(x0 + 0.5, top + 0.5, S - 1, S - 1);
@@ -325,7 +422,10 @@ export class PixelInset {
     ctx.textBaseline = 'middle';
     ctx.fillText('1 km', x0 + kmPx + 5, yb);
     const count = this.recorded ? `${this.pixelsAcross} × ${this.pixelsAcross} px` : 'finer than scene detail';
-    ctx.fillText(count, x1, yb);
+    const how = this.scan === 'whiskbroom'
+      ? `whiskbroom · ${this.timing.rowsPerSweep} rows/sweep`
+      : 'pushbroom · row by row';
+    ctx.fillText(`${count} · ${how} · slow-mo`, x1, yb);
 
     // Thermal legend under the ground-truth view: "15°C [ramp] 45°C"
     if (this.mode === 'thermal') {

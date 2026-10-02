@@ -4,6 +4,13 @@
 //   GSD (nadir) = altitude * IFOV            (wider FOV -> coarser pixels)
 //   Swath       = ground arc spanned by FOV  (higher altitude or wider FOV -> wider swath)
 // Uses a spherical planet, so swath grows faster than the flat-earth 2*h*tan(FOV/2).
+//
+// Timing (circular orbit, ground speed v_g):
+//   line time        = GSD / v_g                      (time to advance one row along track)
+//   pushbroom dwell  = line time                      (every detector stares for a whole row)
+//   whiskbroom: a double-sided rotating mirror sweeps k rows per sweep. No-gap condition:
+//   scan period T = k * line time. Only the Earth-view arc (eta = FOV / 180 deg) records;
+//   the rest is calibration / space view. dwell = eta * T / N.
 
 const DEG = Math.PI / 180;
 
@@ -39,22 +46,53 @@ export function nativeFovDeg(preset) {
   return (preset.pixelsCrossTrack * preset.nativeIfovUrad * 1e-6) / DEG;
 }
 
-/** All derived numbers for the UI / visualization at a chosen FOV. */
-export function sensorGeometry(planet, altitudeKm, preset, fovDeg = nativeFovDeg(preset)) {
+/** Ground-track speed (km/s) of a circular orbit at altitudeKm. */
+export function groundSpeedKmS(planet, altitudeKm) {
+  const r = planet.radiusKm + altitudeKm;
+  return Math.sqrt(planet.mu / r) * (planet.radiusKm / r);
+}
+
+/** Acquisition timing for a scan type, given nadir GSD (m) and FOV (rad). */
+export function scanTiming(planet, altitudeKm, preset, scan, gsdM, fovRad) {
+  const vg = groundSpeedKmS(planet, altitudeKm) * 1000; // m/s
+  const lineS = gsdM / vg;
+  if (scan !== 'whiskbroom') {
+    return { scan: 'pushbroom', groundSpeedMS: vg, lineTimeMs: lineS * 1e3, dwellUs: lineS * 1e6 };
+  }
+  const k = preset.whiskRowsPerSweep;
+  const periodS = k * lineS;                          // no-gap: k rows cover one full scan period
+  const eta = Math.min(1, fovRad / Math.PI);          // Earth-view share of a half mirror turn
+  return {
+    scan: 'whiskbroom',
+    groundSpeedMS: vg,
+    lineTimeMs: lineS * 1e3,
+    rowsPerSweep: k,
+    scanPeriodMs: periodS * 1e3,
+    earthViewFrac: eta,
+    calibrationMs: (1 - eta) * periodS * 1e3,
+    mirrorRpm: 60 / (2 * periodS),                    // double-sided: two sweeps per turn
+    dwellUs: ((eta * periodS) / preset.pixelsCrossTrack) * 1e6,
+  };
+}
+
+/** All derived numbers for the UI / visualization at a chosen FOV and scan type. */
+export function sensorGeometry(planet, altitudeKm, preset, fovDeg = nativeFovDeg(preset), scan = preset.scan) {
   const fov = fovDeg * DEG;
   const ifov = fov / preset.pixelsCrossTrack;
   const half = fov / 2;
   const swathKm = swathWidth(planet.radiusKm, altitudeKm, half);
+  const gsdNadirM = altitudeKm * 1000 * ifov;
   return {
     id: preset.id,
-    scan: preset.scan,
+    scan,
+    timing: scanTiming(planet, altitudeKm, preset, scan, gsdNadirM, fov),
     pixelsCrossTrack: preset.pixelsCrossTrack,
     detectorPitchUm: preset.detectorPitchUm,
     fovDeg,
     halfAngle: half,
     ifovUrad: ifov * 1e6,
     focalLengthMm: (preset.detectorPitchUm * 1e-3) / ifov, // f = p / IFOV
-    gsdNadirM: altitudeKm * 1000 * ifov,
+    gsdNadirM,
     gsdEdgeM: crossTrackGsd(planet.radiusKm, altitudeKm, ifov, half),
     swathKm,
     swathFlatKm: 2 * altitudeKm * Math.tan(half),

@@ -12,12 +12,18 @@
     li { padding: 4px 8px; border-radius: 6px; margin-bottom: 2px; }
     .pass { color: #8be28b; }
     .fail { color: #ff8a80; background: rgba(255, 80, 80, 0.12); }
+    .section { color: #ffd166; font-weight: 700; margin-top: 12px; }
   </style>
 </head>
 <body>
-  <h1>Orbit physics tests</h1>
+  <h1>Orbit Imager tests</h1>
   <div id="summary">running…</div>
   <ul id="results"></ul>
-  <script type="module" src="./orbit.test.js"></script>
+  <script type="module">
+    import './orbit.test.js';
+    import './sim.test.js';
+    import { render } from './harness.js';
+    render();
+  </script>
 </body>
 </html>

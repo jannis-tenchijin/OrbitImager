@@ -7,7 +7,7 @@ description: Verify Orbit Imager works — run the in-browser physics tests and 
 
 ## 1. Start the server
 - Preferred: `preview_start` with name `web` (from `.claude/launch.json`).
-- Fallback: `python3 -m http.server 8000` from repo root.
+- Fallback: `python3 serve.py` from repo root (no-cache; never `python3 -m http.server`).
 
 ## 2. Physics tests
 - Open `http://localhost:8000/tests/`.
@@ -44,7 +44,14 @@ JSON.stringify({ swath: __app.geom.swathKm, gsd: __app.geom.gsdNadirM, f: __app.
 - **Space**: the Earth rotates beneath (~15°/h sim time). **Satellite**: camera tracks the satellite.
 - HUD: Local time ≈ 10:30 at the descending (daylight) equator crossing; LTDN tile = 10:30.
 
-## 8. Mobile layout
+## 8. Record, clouds, day/night, whiskbroom
+- Click **Record** at `5000×`: status shows `REC n/15`; stripes accumulate on map + globe; after ~20 s it shows `Done · 15 orbits · usable ~18% · cloudy ~8%` with **Record again / Clear**.
+- Thermal: day stripes orange, night stripes purple. Visual: night passes have no swath (legend says "night: no data").
+- Cloud-masked cells: dark slate hatch on the map / dark patches on the globe.
+- Whiskbroom: tiles show Rows/sweep, Scan period, Earth view %, Mirror rpm; 3D shows a sweeping beam; close-up fills k rows per sweep with a "calibrating" pause; FOV slider max 110° (pushbroom clamps to 40°).
+- Rapid-click Record/Stop/Now: `__app.recorder.mode` must toggle recording ↔ live correctly.
+
+## 9. Mobile layout
 - `resize_window` preset `mobile`, reload. Panels stack; `document.documentElement.scrollWidth === clientWidth` (no horizontal scroll).
 - Reset with preset `desktop` afterward.
 

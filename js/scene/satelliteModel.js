@@ -57,11 +57,22 @@ const MAT = {
 /** Slit glow per band: visual = blue, thermal = warm orange. */
 const SLIT_GLOW = { visual: 0x3aa0ff, thermal: 0xff7a2a };
 
-/**
- * Pushbroom imager: telescope housing with a long cross-track detector slit.
- * Thermal variant adds what makes TIR instruments recognizable: a black cryo-radiator
- * fin (detectors must be cold) and a cryocooler cylinder.
- */
+/** Thermal extras that make TIR instruments recognizable: cryo-radiator fin + cryocooler. */
+function addThermalExtras(g) {
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.04, 0.55), MAT.dark);
+  fin.position.set(0, -0.2, 0.68);
+  fin.rotation.x = -0.35;
+  g.add(fin);
+  const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.04, 0.3), MAT.silver);
+  strut.position.set(0, -0.25, 0.48);
+  g.add(strut);
+  const cooler = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.38, 10), MAT.gold);
+  cooler.rotation.z = Math.PI / 2;
+  cooler.position.set(-0.55, -0.3, -0.2);
+  g.add(cooler);
+}
+
+/** Pushbroom imager: telescope housing with a long cross-track detector slit (its signature). */
 function buildPushbroom(band = 'visual') {
   const g = new THREE.Group();
   g.name = `instrument:pushbroom:${band}`;
@@ -74,33 +85,61 @@ function buildPushbroom(band = 'visual') {
   hood.material.side = THREE.DoubleSide;
   hood.position.y = -0.66;
   g.add(hood);
-  // Detector line: long and thin across track => the pushbroom "signature"
+  // Detector line: long and thin across track
   const slit = new THREE.Mesh(
     new THREE.BoxGeometry(0.08, 0.02, 0.62),
     new THREE.MeshStandardMaterial({ color: 0x0a1030, emissive: SLIT_GLOW[band] ?? SLIT_GLOW.visual, emissiveIntensity: 1.6 })
   );
   slit.position.y = -0.56;
   g.add(slit);
-
-  if (band === 'thermal') {
-    // Cryo-radiator: black fin on the side facing away from sun/planet
-    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.04, 0.55), MAT.dark);
-    fin.position.set(0, -0.2, 0.68);
-    fin.rotation.x = -0.35;
-    g.add(fin);
-    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.04, 0.3), MAT.silver);
-    strut.position.set(0, -0.25, 0.48);
-    g.add(strut);
-    // Cryocooler cylinder on the aft side of the housing
-    const cooler = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.38, 10), MAT.gold);
-    cooler.rotation.z = Math.PI / 2;
-    cooler.position.set(-0.55, -0.3, -0.2);
-    g.add(cooler);
-  }
+  if (band === 'thermal') addThermalExtras(g);
   return g;
 }
 
-const INSTRUMENTS = { pushbroom: buildPushbroom };
+/**
+ * Whiskbroom imager: housing + a double-sided scan mirror spinning about the along-track (X)
+ * axis inside an open cross-track scan cavity, plus a calibration blackbody that the mirror
+ * views between Earth sweeps (it glows while calibrating).
+ */
+function buildWhiskbroom(band = 'visual') {
+  const g = new THREE.Group();
+  g.name = `instrument:whiskbroom:${band}`;
+  const housing = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.4, 0.62), band === 'thermal' ? MAT.silver : MAT.white);
+  housing.position.y = -0.2;
+  g.add(housing);
+  // Scan cavity: dark half-cylinder shell open toward nadir, axis along-track
+  const cavityMat = MAT.dark.clone();
+  cavityMat.side = THREE.DoubleSide;
+  const cavity = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.62, 14, 1, true, Math.PI / 2, Math.PI), cavityMat);
+  cavity.rotation.z = Math.PI / 2;
+  cavity.position.y = -0.42;
+  g.add(cavity);
+  // Rotating mirror drum: shaft + double-sided mirror plate (spins about X)
+  const rotor = new THREE.Group();
+  rotor.position.y = -0.48;
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.7, 8), MAT.silver);
+  shaft.rotation.z = Math.PI / 2;
+  rotor.add(shaft);
+  const mirror = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.03, 0.44),
+    new THREE.MeshStandardMaterial({ color: 0xdfe8ff, metalness: 1, roughness: 0.05, emissive: SLIT_GLOW[band] ?? SLIT_GLOW.visual, emissiveIntensity: 0.25 })
+  );
+  rotor.add(mirror);
+  g.add(rotor);
+  // Calibration blackbody beside the cavity (cross-track side)
+  const bbMat = new THREE.MeshStandardMaterial({ color: 0x15161c, emissive: 0xff5a1f, emissiveIntensity: 0, roughness: 0.9 });
+  const blackbody = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.08), bbMat);
+  blackbody.position.set(0, -0.36, -0.36);
+  g.add(blackbody);
+  if (band === 'thermal') addThermalExtras(g);
+  g.userData.animate = ({ mirrorAngle, calibrating }) => {
+    rotor.rotation.x = mirrorAngle;
+    bbMat.emissiveIntensity = calibrating ? 1.4 : 0;
+  };
+  return g;
+}
+
+const INSTRUMENTS = { pushbroom: buildPushbroom, whiskbroom: buildWhiskbroom };
 
 /** One solar wing: yoke + three hinged panels extending along +Z (mirrored for -Z). */
 function buildWing(side, cellTex) {
@@ -202,6 +241,11 @@ export function createSatelliteModel({ instrument = 'pushbroom', band = 'visual'
         });
       }
       slot.add(inst);
+      api.instrument = inst;
+    },
+    /** Animate moving instrument parts (whiskbroom mirror + calibration glow). */
+    animate(state) {
+      api.instrument?.userData.animate?.(state);
     },
     /** Rotate both wings about the cross-track axis so cells face the sun (dir in local frame). */
     trackSun(localSunDir) {

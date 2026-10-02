@@ -1,6 +1,6 @@
-// In-browser physics tests. Open tests/index.html via the local HTTP server.
-// Results render on the page and are exposed on window.__testResults for automation.
+// Physics tests: time, orbit, sensor geometry. Run via tests/index.html on the local server.
 
+import { describe, test, near } from './harness.js';
 import { PLANETS, DEFAULT_ORBIT, SENSOR_PRESETS } from '../js/config.js';
 import { julianDate, rotationAngle, sunEci, meanLocalTime } from '../js/physics/time.js';
 import {
@@ -13,24 +13,8 @@ import {
 
 const earth = PLANETS.earth;
 const DEG = Math.PI / 180;
-const results = [];
 
-function test(name, fn) {
-  try {
-    fn();
-    results.push({ name, ok: true });
-  } catch (err) {
-    results.push({ name, ok: false, msg: err.message });
-  }
-}
-
-function near(actual, expected, tol, label = '') {
-  if (!(Math.abs(actual - expected) <= tol)) {
-    throw new Error(`${label} expected ${expected} ± ${tol}, got ${actual}`);
-  }
-}
-
-// --- Time ---
+describe('Time');
 test('Julian date of Unix epoch is 2440587.5', () => near(julianDate(0), 2440587.5, 1e-9));
 
 test('GMST at J2000 epoch ≈ 280.46°', () => {
@@ -54,7 +38,7 @@ test('Sun at June solstice has declination ≈ +23.44°', () => {
   near(Math.asin(dir[2]) / DEG, 23.44, 0.05);
 });
 
-// --- Orbit ---
+describe('Orbit');
 test('Keplerian period at 700 km ≈ 98.77 min', () => {
   near(orbitalPeriod(earth, earth.radiusKm + 700) / 60, 98.773, 0.01);
 });
@@ -135,7 +119,7 @@ test('Default orbit starts at descending node (daylight pass)', () => {
   if (orbitNumber(o, epoch) !== 1) throw new Error('orbit # should start at 1');
 });
 
-// --- Sensor geometry (the relationships the sim is meant to show) ---
+describe('Sensor geometry');
 const TIR = SENSOR_PRESETS.thermal, VIS = SENSOR_PRESETS.visual;
 const geo = (alt, preset = TIR, fov) => sensorGeometry(earth, alt, preset, fov);
 
@@ -198,16 +182,3 @@ test('Swath edges: left↔right great-circle distance = swath, midpoint = nadir'
     near(angle(l, c), angle(r, c), 1e-9, 'symmetric about nadir');
   }
 });
-
-// --- Render results ---
-window.__testResults = results;
-const passed = results.filter((r) => r.ok).length;
-const list = document.getElementById('results');
-for (const r of results) {
-  const li = document.createElement('li');
-  li.className = r.ok ? 'pass' : 'fail';
-  li.textContent = `${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.ok ? '' : ' — ' + r.msg}`;
-  list.appendChild(li);
-}
-document.getElementById('summary').textContent = `${passed}/${results.length} passed`;
-document.title = `${passed === results.length ? '✅' : '❌'} ${passed}/${results.length} tests`;

@@ -76,3 +76,35 @@ Presets are Landsat 8/9-like: thermal ≈ TIRS (1850 px, 25 µm, 142.5 µrad →
 ## Pinned CDN versions + relative paths (2026-10-02)
 **What:** three@0.186.1, topojson-client@3.1.0, d3-geo@3.1.1 pinned in the `index.html` importmap. All asset paths are relative (no leading `/`).
 **Why:** `@latest` can break mid-event; relative paths make GitHub Pages work under `/<repo>/`.
+
+## Swath recorder: status stamped at acquisition time (2026-10-02)
+**What:** `js/sim/recorder.js` (`SwathRecorder`) stores one cross-track row every nodal/300 s (~20 s sim): 9 planet-fixed points + per-vertex/per-cell STATUS (`NONE` not recorded, `DAY`, `NIGHT`, `CLOUD`). Map and globe draw only stored rows (+ a per-frame `tail` to "now"). Modes: `live` (rolling last orbit, back-filled on reset), `recording`, `complete` (frozen + stats).
+**Why:** Recorded data must not change afterwards — clouds move and FOV can change, but past rows keep what they saw. Also keeps rendering append-only (map: offscreen layer; globe: growable buffers with update ranges).
+**Breaks if:** renderers recompute past swath from the orbit (old approach) — cloud flags and FOV history would be wrong.
+
+## Recording cycle completion (2026-10-02)
+**What:** At each same-phase crossing (argument of latitude = start + 2πk, exact because u(t) is linear): complete if the crossing is within swath/2 of the start point (`back at start`), or if the summed westward crossing shift reaches 360° (`circled globe`). At 700 km: 15 orbits ≈ 24.72 h, ~1,200 km west of start. Result is held until Record again / Clear.
+**Breaks if:** the check uses raw longitude without unwrapping per crossing, or time instead of crossings (orbit-phase would be off).
+
+## Coverage % uses grid-cell CENTERS inside swath cells (2026-10-02)
+**What:** 0.5° grid, cos-lat weighted; a grid cell counts if its center lies inside a swath cell (spherical point-in-quad via edge-plane signs). Thermal 186 km: ~18% usable/day; visual ~10% (day only); 110° whisk ~98%.
+**Why:** The first version marked any touched grid cell → +~55 km per stripe → 24.5% > the 21.9% no-overlap ceiling. Center test is unbiased.
+
+## Cloud field is a pure function of time (2026-10-02)
+**What:** `js/geo/clouds.js`: ~320 systems; each generation's position/shape = seeded hash(system, generation); lifetime 8–20 h with `scale = sin(π·age)^0.6`; drift −30 km/h (tropics) / +50 km/h (mid-lat). `systemsAt(t)` memoizes the last t. Global cloud fraction ≈ 10% (measured 9.7–11%).
+**Why:** Recorder, globe and map must agree exactly; deterministic → back-fill and tests work.
+**Breaks if:** anything random (Math.random) or stateful is added to the cloud field.
+
+## Whiskbroom timing model (2026-10-02)
+**What:** Double-sided rotating scan mirror, k along-track detectors (`whiskRowsPerSweep`: thermal 10, visual 16). No-gap: scan period `T = k · line time`. Earth-view share `η = FOV/180°`; rest = calibration/space view. Dwell = η·T/N (thermal native: 6.7 µs vs 14.75 ms pushbroom). Wider FOV → higher η → longer dwell.
+**Display:** 3D/map beam sweeps at a cartoon rate (1.6 s/sweep) with true η. Close-up sweeps take 0.7 s; calibration pause is true-to-ratio up to 1.2 s and labeled with the real % when shortened.
+
+## FOV limits per scan type (2026-10-02)
+**What:** Pushbroom 2–40° (single wide-field telescope), whiskbroom 2–110° (mirror does the scanning). Switching to pushbroom clamps the FOV.
+
+## Visual needs sun ≥ 5°, thermal records at night (2026-10-02)
+**What:** `recordsAtNight` per preset; `VISUAL_MIN_SUN_ELEV_DEG = 5` (checked per point at acquisition). Thermal night rows are `NIGHT` (purple), visual night rows are `NONE` (not drawn).
+
+## Dev server must disable caching (2026-10-02)
+**What:** Use `python3 serve.py` (sends `Cache-Control: no-store`), not `python3 -m http.server`.
+**Why:** Without cache headers the browser mixed a fresh `recordControl.js` with a stale cached `main.js` → `getMode is not a function`. Hard to diagnose mid-event.

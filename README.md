@@ -8,11 +8,13 @@ change swath width and ground resolution, and how pushbroom vs whiskbroom sensor
 **Current:** 3D globe with a sun-synchronous satellite (700 km, ~98.2°, LTDN 10:30 mean solar time),
 2D ground-track map with the recorded swath, thermal (Landsat TIRS-like) and visual (OLI-like) sensor presets,
 an FOV slider (fixed detector array → focal length changes), live FOV/IFOV/GSD/swath, and a pixel close-up
-comparing ground truth with what the sensor records.
+comparing ground truth with what the sensor records — animated row by row (pushbroom) or sweep by sweep
+with calibration pauses (whiskbroom). **Record** accumulates a full day of swaths with drifting clouds:
+cells imaged under cloud are marked unusable, the visual sensor records only in daylight, thermal also at night.
 
 ## Run locally
 ```bash
-python3 -m http.server 8000
+python3 serve.py
 ```
 Open http://localhost:8000/ — physics tests at http://localhost:8000/tests/.
 (Needs an HTTP server; opening the file directly won't load ES modules.)
@@ -21,7 +23,8 @@ Open http://localhost:8000/ — physics tests at http://localhost:8000/tests/.
 - Drag / scroll on the globe to rotate / zoom
 - Space or ⏸ to pause, time-warp buttons for speed, **Now** to jump to real time
 - **View:** *Space* (Earth rotates beneath), *Earth* (camera rotates with Earth — stay over one country), *Satellite* (follow)
-- **Sensor:** switch Thermal (LST) / Visual, drag **FOV**, ↺ resets to the native optics
+- **Sensor:** switch Thermal (LST) / Visual and Pushbroom / Whiskbroom, drag **FOV**, ↺ resets to the native optics
+- **Record** (map panel): accumulate swaths until the satellite is back over its start or has circled the globe (~15 orbits); try `5000×`
 
 ## Project docs
 - [docs/backlog.md](docs/backlog.md) — what's next

@@ -6,10 +6,10 @@ altitude/FOV/IFOV → swath & GSD, and pushbroom vs whiskbroom → *when* each p
 Format: `- [ ] **Title** — one-line why/what (added YYYY-MM-DD)`
 
 ## Next up (imaging core)
-- [ ] **Pushbroom row-by-row fill in the close-up** — recorded image builds up one full cross-track row at a time as the scan line passes. (2026-10-02)
-- [ ] **Whiskbroom instrument model + animation** — rotating scan-mirror drum on the satellite; pixels in a row light up one by one across track (mirror sweep), so each pixel has its own timestamp. (2026-10-02)
 - [ ] **Pixel-timing view** — close-up colored by acquisition time; makes pushbroom vs whiskbroom difference obvious. (2026-10-02)
-- [ ] **Visual sensor records only in daylight** — thermal records day + night (LST night passes at 22:30 LTAN); visual swath should be blank on the night side. (2026-10-02)
+- [ ] **Bow-tie effect** — whiskbroom pixels grow off-nadir so consecutive sweeps overlap at the swath edge (MODIS-style). (2026-10-02)
+- [ ] **Revisit statistics per AOI** — from a recording: how often and at what local time each AOI was seen clear. (2026-10-02)
+- [ ] **Cloud-free composite** — over several cycles, show where at least one clear look exists. (2026-10-02)
 - [ ] **Altitude slider** — same panel as FOV; altitude changes swath *and* GSD together. Needs orbit re-creation on change. (2026-10-02)
 - [ ] **Edge-GSD visualization** — show pixel stretch toward swath edge (bow-tie for whiskbroom); tile already shows `GSD edge`. (2026-10-02)
 
@@ -39,3 +39,9 @@ Format: `- [ ] **Title** — one-line why/what (added YYYY-MM-DD)`
 - [x] Pixel close-up: synthetic scene, ground truth vs recorded at GSD (2026-10-02)
 - [x] LTDN fixed to mean solar time (10:30 year-round), Local time + LTDN tiles (2026-10-02)
 - [x] View modes: Space / Earth / Satellite (2026-10-02)
+- [x] Record mode: swaths accumulate until back at start / circled globe, coverage stats (2026-10-02)
+- [x] Drifting, evolving clouds; swath cells recorded under cloud marked unusable (2026-10-02)
+- [x] Visual records only in daylight; thermal day + night (2026-10-02)
+- [x] Pushbroom row-by-row and whiskbroom sweep + calibration animation in the close-up (2026-10-02)
+- [x] Whiskbroom scan type: rotating mirror model, 3D beam, timing tiles, wider FOV limit (2026-10-02)
+- [x] No-cache dev server `serve.py` (2026-10-02)

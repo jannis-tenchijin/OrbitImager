@@ -6,7 +6,8 @@ altitude / FOV / IFOV → swath & GSD; pushbroom vs whiskbroom → *when* each p
 Style: low-poly cartoon, appealing, not realistic — but every part must be recognizable.
 
 ## Run
-- Serve: `python3 -m http.server 8000` from repo root (or the `web` config in `.claude/launch.json`).
+- Serve: `python3 serve.py` from repo root (or the `web` config in `.claude/launch.json`).
+  Do NOT use `python3 -m http.server`: no cache headers → stale ES modules mixed with fresh ones.
 - App: http://localhost:8000/ · Tests: http://localhost:8000/tests/ (page title shows `✅ N/N tests`).
 - Opening `index.html` via `file://` does NOT work (ES modules + fetch need HTTP).
 
@@ -21,17 +22,21 @@ Style: low-poly cartoon, appealing, not realistic — but every part must be rec
 index.html            importmap + DOM layout
 css/style.css         layout + theme tokens (:root vars)
 js/config.js          planets, default orbit/sensor, palette, time warps
-js/main.js            app loop: physics -> globe + map + HUD
+js/main.js            app loop: physics -> recorder -> globe + map + panels
 js/physics/time.js    Julian date, planet rotation (GMST), sun direction
 js/physics/orbit.js   Keplerian + J2 propagation, frames, ground track
 js/physics/sensor.js  focal-length sensor model: FOV -> IFOV, GSD, swath
 js/geo/land.js        land data loading + shared equirectangular painter
+js/geo/clouds.js      deterministic drifting/evolving cloud field (pure function of time)
+js/sim/recorder.js    swath recorder: rows + status stamped at acquisition, coverage stats
 js/scene/globe.js     Three.js scene (planet, atmosphere, satellite, orbit viz)
 js/scene/satelliteModel.js  satellite mesh + swappable instrument slot
 js/map/map2d.js       2D canvas map + ground track
 js/ui/hud.js          orbit telemetry tiles (+ shared fmt helpers)
 js/ui/sensorPanel.js  thermal/visual switch, FOV slider, sensor tiles
-js/ui/pixelInset.js   pixel close-up: synthetic scene, truth vs recorded
+js/ui/pixelInset.js   pixel close-up: synthetic scene, push/whisk acquisition animation
+js/ui/recordControl.js  Record / Stop / Clear + status + swath legend
+serve.py              no-cache static dev server
 tests/                in-browser physics tests
 data/land-50m.json    Natural Earth land (TopoJSON, vendored)
 docs/                 backlog / rejected / decisions
@@ -43,6 +48,8 @@ docs/                 backlog / rejected / decisions
 - Frames: ECI (Z = north) in physics; `toScene()` in `globe.js` maps to Three.js Y-up. Read `docs/decisions.md` before touching frames.
 - Sensor presets store hardware only (pixels, pitch, native IFOV). FOV slider = focal length; IFOV, GSD, swath are derived in `sensor.js`, never stored.
 - Local times / LTDN are MEAN solar time (UTC + lon/15). Never use the apparent sun for RAAN.
+- Recorded swath data comes only from `SwathRecorder`; never recompute past swath from the orbit.
+- The cloud field must stay deterministic (no `Math.random`, no hidden state).
 - Colors live in `PALETTE` (`config.js`) or CSS `:root` vars — no stray hex values in new code.
 - Comments: brief, explain the *why* / the math. Match the existing density.
 - New physics => add a test in `tests/orbit.test.js` with a known reference value.
