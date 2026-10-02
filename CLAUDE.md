@@ -37,6 +37,8 @@ js/ui/hud.js          orbit telemetry tiles (+ shared fmt helpers)
 js/ui/sensorPanel.js  thermal/visual switch, FOV slider, sensor tiles
 js/ui/pixelInset.js   pixel close-up: synthetic scene, push/whisk acquisition animation
 js/ui/recordControl.js  Record / Stop / Clear + status + swath legend
+js/ui/resultsPanel.js recording results + pick-a-place revisit statistics
+js/geo/targets.js     fixed list of 80 tasked cities (SatVu)
 serve.py              no-cache static dev server
 tests/                in-browser physics tests
 data/land-50m.json    Natural Earth land (TopoJSON, vendored)
@@ -56,6 +58,11 @@ docs/                 backlog / rejected / decisions
 - Colors live in `PALETTE` (`config.js`) or CSS `:root` vars — no stray hex values in new code.
 - Comments: brief, explain the *why* / the math. Match the existing density.
 - New physics => add a test in `tests/orbit.test.js` with a known reference value.
+
+## Layout rule
+- Desktop must fit one window with NO page scrollbar (check 1280×760, 1440×900, 1920×1080 with
+  `document.documentElement.scrollHeight === innerHeight`). Left: 3D over [Orbit | Results];
+  right: map over [Sensor | close-up]. Map and 3D view flex; cards keep natural height.
 
 ## Docs discipline
 - New idea → `docs/backlog.md`. Dropped idea → `docs/rejected.md` with reason.

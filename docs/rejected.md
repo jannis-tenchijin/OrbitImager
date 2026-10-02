@@ -36,3 +36,9 @@ Things we considered and dropped. Format: `## Title (YYYY-MM-DD)` + **Why reject
 
 ## Auto-ending the recording after one ground-track cycle (2026-10-02)
 **Why rejected:** Superseded — recording now runs until Stop so multi-day revisit/coverage can be studied.
+
+## User-added SatVu targets (2026-10-02)
+**Why rejected:** Jannis: fixed list of 80 cities only. Picking a place never tasks the satellite.
+
+## Per-image list in the place statistics (2026-10-02)
+**Why rejected:** Jannis: only the final statistics (counts + "1 image every X days").

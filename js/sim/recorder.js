@@ -6,6 +6,10 @@
 // Modes: 'live'      rolling window of the last orbit
 //        'recording' accumulate from the press of Record until Stop (or the safety cap)
 //        'stopped'   frozen result + coverage stats (until Clear / Record again)
+//
+// Imaging: 'strip'    continuous swath rows (pushbroom / whiskbroom / SAR / strip framing)
+//          'targeted' discrete frames of tasked targets only (SatVu): when a target passes
+//                     abeam within the agility limit, one frame is stored for it.
 
 import { propagate, elementsAt, eciToEcef, ecefToLatLon, swathEdges, crossTrackPointEci } from '../physics/orbit.js';
 import { sunEci } from '../physics/time.js';
@@ -30,6 +34,22 @@ const wrap180 = (x) => ((((x + 180) % 360) + 360) % 360) - 180;
 const wrapPi = (x) => Math.atan2(Math.sin(x), Math.cos(x));
 /** Point c of a row (pts is a Float32Array of 9 x 3 unit vectors). */
 const rowPoint = (pts, c) => [pts[3 * c], pts[3 * c + 1], pts[3 * c + 2]];
+const normalize = (v) => {
+  const n = Math.hypot(v[0], v[1], v[2]);
+  return [v[0] / n, v[1] / n, v[2] / n];
+};
+const PASS_GAP_MS = 10 * 60 * 1000; // hits further apart than this belong to different passes
+
+/** Spherical point-in-quad: P on the inner side of all four edge planes. */
+export function quadContains(V, P) {
+  let pos = 0, neg = 0;
+  for (let i = 0; i < 4; i++) {
+    const s = dot(cross(V[i], V[(i + 1) % 4]), P);
+    if (s >= 0) pos++;
+    if (s <= 0) neg++;
+  }
+  return pos === 4 || neg === 4;
+}
 
 export class SwathRecorder {
   /**
@@ -43,8 +63,11 @@ export class SwathRecorder {
     this.sinMinElev = Math.sin(minSunElevDeg * DEG);
     this.maxRows = maxRows;
     this.setOrbit(orbit);
-    this.sensor = { edges: { left: 0, right: 0 }, kind: 'thermal', recordsAtNight: true, seesThroughClouds: false };
+    this.sensor = { edges: { left: 0, right: 0 }, kind: 'thermal', recordsAtNight: true, seesThroughClouds: false, imaging: 'strip' };
     this.samples = [];
+    this.frames = [];       // targeted imaging: discrete frames
+    this.frameVersion = 0;  // bumps on any frame change (renderers rebuild)
+    this.lastFrame = null;
     this.version = 0;      // bumps whenever samples are removed (renderers do a full redraw)
     this.mode = 'live';
     this.grid = new Uint8Array(GRID_W * GRID_H);
@@ -62,17 +85,30 @@ export class SwathRecorder {
 
   /**
    * Sensor parameters applied to FUTURE rows: { edges | swathKm, kind, recordsAtNight,
-   * seesThroughClouds }. edges = signed Earth-central angles {left, right} (+ = left of track).
+   * seesThroughClouds, imaging, targets, accessLam, frameKm }. edges = signed Earth-central
+   * angles {left, right} (+ = left of track). Targeted: accessLam = max cross-track central
+   * angle (agility), frameKm = { cross, along }.
    */
-  configure({ edges, swathKm, kind = 'thermal', recordsAtNight = true, seesThroughClouds = false }) {
-    this.sensor = { edges: edges ?? swathEdges(swathKm, this.R), kind, recordsAtNight, seesThroughClouds };
+  configure({ edges, swathKm, kind = 'thermal', recordsAtNight = true, seesThroughClouds = false,
+    imaging = 'strip', targets = [], accessLam = 0, frameKm = { cross: 0, along: 0 } }) {
+    this.sensor = {
+      edges: edges ?? swathEdges(swathKm, this.R), kind, recordsAtNight, seesThroughClouds,
+      imaging, targets, accessLam, frameKm,
+    };
+  }
+
+  get targeted() {
+    return this.sensor.imaging === 'targeted';
   }
 
   /** Live mode, back-filled with the last orbit (the cloud field is a pure function of time). */
   resetLive(tMs) {
     this.mode = 'live';
     this.samples = [];
+    this.frames = [];
+    this.lastFrame = null;
     this.version++;
+    this.frameVersion++;
     this.stats = null;
     this.lastT = tMs - this.periodMs - this.stepMs;
     this.advance(tMs);
@@ -82,12 +118,17 @@ export class SwathRecorder {
   startRecording(tMs) {
     this.mode = 'recording';
     this.samples = [];
+    this.frames = [];
+    this.lastFrame = null;
     this.version++;
+    this.frameVersion++;
     this.grid.fill(0);
+    this.targetSeen = new Uint8Array(this.sensor.targets.length); // bit 1 clear look, bit 2 cloudy look
     this.stats = { usableArea: 0, cloudOnlyArea: 0, imagedArea: 0, turns: 0, startMs: tMs, endMs: tMs, reason: null };
     this.lastU = null;
     this.lastT = tMs - this.stepMs;
-    this.addSample(tMs);
+    if (!this.targeted) this.addSample(tMs);
+    this.countTurns(tMs);
     this.lastT = tMs;
   }
 
@@ -103,9 +144,14 @@ export class SwathRecorder {
     if (this.mode === 'stopped') return;
     while (this.lastT + this.stepMs <= tMs) {
       const tb = this.lastT + this.stepMs;
-      this.addSample(tb);
+      if (this.targeted) this.scanTargets(this.lastT, tb);
+      else this.addSample(tb);
+      if (this.mode === 'recording') {
+        this.countTurns(tb);
+        this.stats.endMs = tb;
+      }
       this.lastT = tb;
-      if (this.mode === 'recording' && this.samples.length >= this.maxRows) {
+      if (this.mode === 'recording' && this.samples.length + this.frames.length >= this.maxRows) {
         this.stop('buffer full');
         return;
       }
@@ -117,6 +163,12 @@ export class SwathRecorder {
       if (drop) {
         this.samples.splice(0, drop);
         this.version++;
+      }
+      let fdrop = 0;
+      while (fdrop < this.frames.length && this.frames[fdrop].tMs < cutoff) fdrop++;
+      if (fdrop) {
+        this.frames.splice(0, fdrop);
+        this.frameVersion++;
       }
     }
   }
@@ -155,11 +207,62 @@ export class SwathRecorder {
     const s = this.makeSample(tMs);
     const prev = this.samples[this.samples.length - 1];
     this.samples.push(s);
-    if (this.mode === 'recording') {
-      this.countTurns(tMs);
-      this.stats.endMs = tMs;
-      if (prev) this.markCoverage(prev, s);
+    if (this.mode === 'recording' && prev) this.markCoverage(prev, s);
+  }
+
+  /** Sub-satellite point at tMs: planet-fixed unit vector + lat/lon. */
+  subPoint(tMs) {
+    const st = propagate(this.orbit, tMs);
+    const r = Math.hypot(...st.pos);
+    const u = eciToEcef(st.pos.map((x) => x / r), st.theta);
+    const g = ecefToLatLon(u, 1);
+    return { u, latDeg: g.latDeg, lonDeg: g.lonDeg };
+  }
+
+  /** Sun direction in the planet-fixed frame at tMs. */
+  sunEcef(tMs) {
+    return eciToEcef(sunEci(tMs).dir, propagate(this.orbit, tMs).theta);
+  }
+
+  /**
+   * Targeted imaging between ta and tb: a target is imaged when it passes abeam (its
+   * along-track coordinate crosses the satellite's) within the agility limit accessLam.
+   */
+  scanTargets(ta, tb) {
+    const ua = this.subPoint(ta).u, ub = this.subPoint(tb).u;
+    const a = normalize([ub[0] - ua[0], ub[1] - ua[1], ub[2] - ua[2]]); // along-track (planet-fixed)
+    const pa = dot(ua, a), pb = dot(ub, a);
+    const cosAccess = Math.cos(this.sensor.accessLam);
+    for (const tg of this.sensor.targets) {
+      const pt = dot(tg.u, a);
+      if (!(pt > pa && pt <= pb)) continue;
+      const f = (pt - pa) / (pb - pa);
+      const uc = nlerp(ua, ub, f);
+      if (dot(tg.u, uc) < cosAccess) continue; // outside the agility corridor (or far side)
+      this.addFrame(tg, uc, a, ta + f * (tb - ta));
     }
+  }
+
+  addFrame(tg, uc, a, tMs) {
+    const P = tg.u;
+    const al = normalize([a[0] - dot(a, P) * P[0], a[1] - dot(a, P) * P[1], a[2] - dot(a, P) * P[2]]);
+    const cr = cross(P, al);
+    const ha = this.sensor.frameKm.along / (2 * this.R), hc = this.sensor.frameKm.cross / (2 * this.R);
+    const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sa, sc]) =>
+      normalize([0, 1, 2].map((k) => P[k] + sa * ha * al[k] + sc * hc * cr[k])));
+    const status = this.status(P, this.sunEcef(tMs), tMs);
+    const k = (this.R + this.orbit.altitudeKm) / this.R;
+    const lam = Math.acos(Math.min(1, dot(P, uc)));
+    const offNadirDeg = Math.atan2(Math.sin(lam), k - Math.cos(lam)) / DEG;
+    const frame = {
+      tMs, targetId: tg.id, name: tg.name, latDeg: tg.latDeg, lonDeg: tg.lonDeg, u: P, status, offNadirDeg,
+      corners, cornerLat: corners.map((c) => Math.asin(c[2]) / DEG), cornerLon: corners.map((c) => Math.atan2(c[1], c[0]) / DEG),
+      kind: this.sensor.kind,
+    };
+    this.frames.push(frame);
+    this.frameVersion++;
+    this.lastFrame = frame;
+    if (this.mode === 'recording' && status !== STATUS.NONE) this.targetSeen[tg.id] |= status === STATUS.CLOUD ? 2 : 1;
   }
 
   /** Accumulate orbits flown (argument of latitude), robust to orbit changes mid-recording. */
@@ -172,7 +275,7 @@ export class SwathRecorder {
 
   /** Provisional row at "now" so the drawn swath reaches the scan line between samples. */
   tail(tMs) {
-    if (this.mode === 'stopped' || !this.samples.length) return null;
+    if (this.mode === 'stopped' || this.targeted || !this.samples.length) return null;
     return this.makeSample(tMs);
   }
 
@@ -200,16 +303,12 @@ export class SwathRecorder {
     const polar = Math.max(Math.abs(latMax), Math.abs(latMin)) > 80;
     const c0 = polar ? 0 : Math.floor((Math.min(...lons) + 180) / GRID_DEG);
     const c1 = polar ? GRID_W - 1 : Math.floor((Math.max(...lons) + 180) / GRID_DEG);
-    const n = V.map((v, i) => cross(v, V[(i + 1) % 4])); // edge plane normals
     for (let r = r0; r <= r1; r++) {
       const lat = (90 - (r + 0.5) * GRID_DEG) * DEG, cl = Math.cos(lat), sl = Math.sin(lat);
       for (let cc = c0; cc <= c1; cc++) {
         const col = ((cc % GRID_W) + GRID_W) % GRID_W;
         const lon = (-180 + (col + 0.5) * GRID_DEG) * DEG;
-        const P = [cl * Math.cos(lon), cl * Math.sin(lon), sl];
-        const s0 = dot(n[0], P), s1 = dot(n[1], P), s2 = dot(n[2], P), s3 = dot(n[3], P);
-        const inside = (s0 >= 0 && s1 >= 0 && s2 >= 0 && s3 >= 0) || (s0 <= 0 && s1 <= 0 && s2 <= 0 && s3 <= 0);
-        if (inside) this.markIndex(r * GRID_W + col, r, bit);
+        if (quadContains(V, [cl * Math.cos(lon), cl * Math.sin(lon), sl])) this.markIndex(r * GRID_W + col, r, bit);
       }
     }
   }
@@ -230,16 +329,83 @@ export class SwathRecorder {
     }
   }
 
-  /** Coverage summary: days, orbits, usable % of globe, % of imaged area only seen cloudy. */
+  /**
+   * Coverage summary: days, orbits, Earth covered % (imaged incl. cloudy), usable % (cloud-free),
+   * % of the imaged area only ever seen cloudy. Targeted: unique targets x frame area.
+   */
   summary() {
     const s = this.stats;
     if (!s) return null;
+    let covered, usable, cloudOnly;
+    if (this.targeted) {
+      const frac = (this.sensor.frameKm.cross * this.sensor.frameKm.along) / (4 * Math.PI * this.R * this.R);
+      const seen = Array.from(this.targetSeen ?? []);
+      covered = seen.filter((b) => b).length * frac;
+      usable = seen.filter((b) => b & 1).length * frac;
+      cloudOnly = seen.filter((b) => b === 2).length * frac;
+    } else {
+      covered = s.imagedArea / this.totalArea;
+      usable = s.usableArea / this.totalArea;
+      cloudOnly = s.cloudOnlyArea / this.totalArea;
+    }
     return {
       days: (s.endMs - s.startMs) / 86400000,
       orbits: Math.floor(s.turns),
       reason: s.reason,
-      usablePct: (100 * s.usableArea) / this.totalArea,
-      cloudyPct: s.imagedArea ? (100 * s.cloudOnlyArea) / s.imagedArea : 0,
+      coveredPct: 100 * covered,
+      usablePct: 100 * usable,
+      cloudyPct: covered ? (100 * cloudOnly) / covered : 0,
+      frames: this.frames.length,
+    };
+  }
+
+  /**
+   * Images of one place (planet-fixed unit vector u) in the recorded data.
+   * Strip: hits of u inside recorded cells, grouped into passes (gap > 10 min); a pass is an
+   * image unless it was not recorded (visual at night). Targeted: frames containing u.
+   * Returns { images, cloudy, usable, nightNoData, days, everyDays, usableEveryDays }.
+   */
+  placeStats(u) {
+    const days = this.stats
+      ? (this.stats.endMs - this.stats.startMs) / 86400000
+      : this.samples.length ? (this.samples.at(-1).tMs - this.samples[0].tMs) / 86400000 : this.periodMs / 86400000;
+    let looks = []; // per image: STATUS
+    let nightNoData = 0;
+    if (this.targeted) {
+      for (const f of this.frames) if (quadContains(f.corners, u)) looks.push(f.status);
+      nightNoData = looks.filter((s) => s === STATUS.NONE).length;
+      looks = looks.filter((s) => s !== STATUS.NONE);
+    } else {
+      const passes = [];
+      const cosReject = Math.cos(0.35); // ~2200 km: no swath reaches further from its row center
+      for (let i = 1; i < this.samples.length; i++) {
+        const a = this.samples[i - 1], b = this.samples[i];
+        if (dot(u, rowPoint(b.pts, 4)) < cosReject) continue;
+        for (let c = 0; c < CROSS_CELLS; c++) {
+          const quad = [rowPoint(a.pts, c), rowPoint(a.pts, c + 1), rowPoint(b.pts, c + 1), rowPoint(b.pts, c)];
+          if (!quadContains(quad, u)) continue;
+          const last = passes.at(-1);
+          if (!last || b.tMs - last.tMs > PASS_GAP_MS) passes.push({ tMs: b.tMs, st: [b.cst[c]] });
+          else {
+            last.tMs = b.tMs;
+            last.st.push(b.cst[c]);
+          }
+          break;
+        }
+      }
+      for (const p of passes) {
+        const rec = p.st.filter((s) => s !== STATUS.NONE);
+        if (!rec.length) nightNoData++;
+        else looks.push(rec.filter((s) => s === STATUS.CLOUD).length * 2 > rec.length ? STATUS.CLOUD : STATUS.DAY);
+      }
+    }
+    const images = looks.length;
+    const cloudy = looks.filter((s) => s === STATUS.CLOUD).length;
+    const usable = images - cloudy;
+    return {
+      images, cloudy, usable, nightNoData, days,
+      everyDays: images ? days / images : Infinity,
+      usableEveryDays: usable ? days / usable : Infinity,
     };
   }
 }

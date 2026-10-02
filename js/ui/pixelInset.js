@@ -8,13 +8,15 @@
 //   pushbroom  - one full cross-track row at once, row after row.
 //   whiskbroom - a k-row spot sweeps left -> right (pixel by pixel), then the mirror calibrates;
 //                the next sweep starts exactly k rows further down (no gap).
-//   framing    - a whole 2-D frame (F rows) is exposed at once, frame after frame.
+//   framing    - PERIODIC snapshots: shutter flash -> whole 2-D frame appears at once -> hold ->
+//                shutter closed until the next exposure (timeline shows discrete exposures).
+//                Targeted imagers (SatVu) take one tasked scene per pass.
 //   SAR        - azimuth lines appear after SAR processing (row by row), speckled.
 
 const FILL_S = 5;             // real seconds to fill the scene (row-based scans)
 const WHISK_CYCLE_MAX_S = 1.9; // real seconds per whisk cycle when there are few sweeps
 const WHISK_MIN_SWEEP = 0.35; // readability floor for the visible sweep share of a cycle
-const FRAME_S = 1.4;          // real seconds per frame (framing)
+const FRAME_S = 2.2;          // real seconds per exposure cycle (framing): flash, hold, shutter closed
 const HOLD_S = 1.5;           // pause on the finished image before looping
 const SAR_DB_RANGE = [-25, 5];
 
@@ -268,9 +270,10 @@ export class PixelInset {
    * mode: 'thermal' | 'visual' | 'sar'; gsdX/gsdY: pixel footprint cross-/along-track (m);
    * timing: geometry .timing (scan type etc.); looks: SAR looks. Restarts the animation.
    */
-  set(mode, gsdX, gsdY, timing, looks = 1) {
+  set(mode, gsdX, gsdY, timing, looks = 1, { targeted = false } = {}) {
     const same = mode === this.mode && gsdX === this.gsdX && gsdY === this.gsdY && looks === this.looks && this.cols;
     this.timing = timing;
+    this.targeted = targeted;
     this.scan = timing?.scan ?? 'pushbroom';
     this.animT = 0;
     if (!same) {
@@ -299,12 +302,14 @@ export class PixelInset {
     const done = (d) => ({ doneRows: d, g0: d, g1: d, cols: 0, calibrating: false, finished: d >= rows });
     if (this.scan === 'framing') {
       const F = Math.max(1, Math.min(rows, this.timing.frameRows ?? 512)); // rows per frame
-      const frames = Math.ceil(rows / F);
-      if (this.animT > frames * FRAME_S + HOLD_S) this.animT = 0;
-      const f = Math.floor(this.animT / FRAME_S);
-      const flash = (this.animT % FRAME_S) < 0.25 && f < frames; // exposure flash on the new frame
-      const st = done(Math.min(rows, (f + (f < frames ? 1 : 0)) * F));
-      st.flash = flash ? [Math.min(rows, f * F), Math.min(rows, (f + 1) * F)] : null;
+      const frames = Math.ceil(rows / F); // exposures needed to cover the window
+      const n = Math.floor(this.animT / FRAME_S); // exposure counter
+      const phase = (this.animT % FRAME_S) / FRAME_S;
+      const idx = n % frames;
+      const range = [idx * F, Math.min(rows, (idx + 1) * F)];
+      const st = done(range[1]);
+      st.finished = false;
+      Object.assign(st, { exposure: n + 1, phase, flash: phase < 0.12 ? range : null, shutterClosed: phase > 0.7 });
       return st;
     }
     if (this.scan !== 'whiskbroom') {
@@ -365,6 +370,52 @@ export class PixelInset {
       ctx.restore();
     }
     ctx.restore();
+  }
+
+  /** Framing: frame counter, shutter-closed overlay and an exposure timeline (discrete snapshots). */
+  drawShutter(ctx, acq, x1, top, S) {
+    const t = this.timing;
+    const next = this.targeted ? 'next pass over this target' : `next frame in ${(t.framePeriodMs / 1000).toFixed(t.framePeriodMs < 10000 ? 2 : 0)} s`;
+    if (acq.shutterClosed) {
+      ctx.fillStyle = 'rgba(11, 16, 38, 0.6)';
+      ctx.fillRect(x1, top, S, S);
+      ctx.fillStyle = '#c9d4ff';
+      ctx.font = '600 11px system-ui, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('shutter closed', x1 + 10, top + S / 2 - 8);
+      ctx.font = '10.5px system-ui, sans-serif';
+      ctx.fillText(next, x1 + 10, top + S / 2 + 8);
+    }
+    // Frame counter badge
+    const label = this.targeted ? `Scene #${acq.exposure}` : `Frame #${acq.exposure}`;
+    ctx.font = '600 10.5px system-ui, sans-serif';
+    const w = ctx.measureText(label).width + 12;
+    ctx.fillStyle = 'rgba(11, 16, 38, 0.8)';
+    ctx.fillRect(x1 + S - w - 6, top + 6, w, 18);
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, x1 + S - w, top + 15);
+    // Exposure timeline: discrete ticks (snapshots), cursor moving between them
+    const ty = top + S - 12, tx0 = x1 + 10, tw = S - 20, ticks = 5;
+    ctx.fillStyle = 'rgba(11, 16, 38, 0.75)';
+    ctx.fillRect(x1 + 4, ty - 8, S - 8, 16);
+    ctx.strokeStyle = 'rgba(230, 236, 255, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(tx0, ty);
+    ctx.lineTo(tx0 + tw, ty);
+    ctx.stroke();
+    const cur = ticks - 2; // current exposure tick; earlier ones to the left
+    for (let i = 0; i < ticks; i++) {
+      const x = tx0 + (tw * i) / (ticks - 1);
+      ctx.fillStyle = i < cur ? 'rgba(255, 255, 255, 0.55)' : i === cur ? '#ffffff' : 'rgba(255, 255, 255, 0.25)';
+      ctx.fillRect(x - 1.5, ty - 5, 3, 10);
+    }
+    const cx = tx0 + (tw * (cur + acq.phase)) / (ticks - 1);
+    ctx.fillStyle = '#ff9f43';
+    ctx.beginPath();
+    ctx.arc(cx, ty, 3.5, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   draw() {
@@ -443,6 +494,8 @@ export class PixelInset {
     ctx.textBaseline = 'middle';
     ctx.fillText('leak', x0 + (LEAK.x / sizeM) * S + 10, top + (LEAK.y / sizeM) * S - 12);
 
+    if (this.scan === 'framing') this.drawShutter(ctx, acq, x1, top, S);
+
     // Whiskbroom calibration notice (true share of the mirror cycle)
     if (acq.calibrating) {
       const pct = Math.round((1 - this.timing.earthViewFrac) * 100);
@@ -470,7 +523,7 @@ export class PixelInset {
     const count = this.recorded ? `${this.cols} × ${this.rows} px` : `finer than scene detail (${texelM} m)`;
     const how = {
       whiskbroom: `whiskbroom · ${this.timing?.rowsPerSweep} rows/sweep`,
-      framing: 'framing · whole frames',
+      framing: this.targeted ? 'framing · 1 tasked scene per pass' : 'framing · periodic snapshots',
       sar: 'SAR · azimuth lines',
     }[this.scan] ?? 'pushbroom · row by row';
     ctx.fillText(`${count} · ${how} · slow-mo`, x1, yb);

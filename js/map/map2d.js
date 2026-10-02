@@ -22,6 +22,9 @@ export class Map2D {
     this.swathCtx = this.swathLayer.getContext('2d');
     this.swathState = { version: -1, count: 0, dirty: true };
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
+    this.pin = null;        // picked place { latDeg, lonDeg }
+    this.onPick = null;     // set while picking: (latDeg, lonDeg) => void
+    canvas.addEventListener('click', (e) => this.handleClick(e));
     new ResizeObserver(() => this.resize()).observe(canvas.parentElement);
     this.resize();
   }
@@ -64,6 +67,38 @@ export class Map2D {
     this.swathLayer.height = this.layer.height;
     this.swathState.dirty = true;
     this.hatch = null;
+  }
+
+  /** Arm picking: the next click on the map calls cb(latDeg, lonDeg). */
+  startPicking(cb) {
+    this.onPick = cb;
+    this.canvas.style.cursor = 'crosshair';
+  }
+
+  stopPicking() {
+    this.onPick = null;
+    this.canvas.style.cursor = '';
+  }
+
+  setPin(place) {
+    this.pin = place;
+  }
+
+  /** CSS px -> lat/lon (null outside the map). */
+  fromPx(px, py) {
+    const { x, y, w, h } = this.rect;
+    if (px < x || px > x + w || py < y || py > y + h) return null;
+    return { latDeg: 90 - ((py - y) / h) * 180, lonDeg: ((px - x) / w) * 360 - 180 };
+  }
+
+  handleClick(e) {
+    if (!this.onPick) return;
+    const r = this.canvas.getBoundingClientRect();
+    const ll = this.fromPx(e.clientX - r.left, e.clientY - r.top);
+    if (!ll) return;
+    const cb = this.onPick;
+    this.stopPicking();
+    cb(ll.latDeg, ll.lonDeg);
   }
 
   /** Map-local px (origin at the map's top-left corner). */
@@ -211,7 +246,11 @@ export class Map2D {
    * pastTrack: groundTrack() samples (last orbit). future: swathTrack() samples (next orbit).
    * recorder/tail: recorded swath rows. beam: null (pushbroom) or { active, sweep } (whiskbroom).
    */
-  render({ sub, pastTrack, future, nowMs, swathColor, recorder, tail, cloudSystems, beam }) {
+  /**
+   * targeted: { targets, flashFrame, flashAge } for SatVu-style tasked imaging (else null) —
+   * then `future` holds the agility corridor instead of swath edges and no scan line is drawn.
+   */
+  render({ sub, pastTrack, future, nowMs, swathColor, recorder, tail, cloudSystems, beam, targeted = null }) {
     const ctx = this.ctx;
     const { x, y, w, h } = this.rect;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -283,7 +322,9 @@ export class Map2D {
     ctx.globalAlpha = 1;
 
     // Current scan line (pushbroom: whole line; whiskbroom: swept part of the current sweep)
-    if (!beam || beam.active) this.drawScanLine(ctx, future[0], swathColor, beam ? beam.sweep : 1);
+    if (targeted) this.drawTargeted(ctx, recorder, targeted, swathColor);
+    else if (!beam || beam.active) this.drawScanLine(ctx, future[0], swathColor, beam ? beam.sweep : 1);
+    this.drawPin(ctx);
 
     this.drawSatellite(ctx, sub, future[1] ?? sub, nowMs);
     ctx.restore();
@@ -330,6 +371,59 @@ export class Map2D {
       const [, py] = this.toPx(lat, 0);
       ctx.fillText(`${Math.abs(lat)}°${lat < 0 ? 'S' : lat > 0 ? 'N' : ''}`, x + 4, py - 7);
     }
+  }
+
+  /** Tasked targets (faint diamonds), recorded frames (small squares), flash on the newest. */
+  drawTargeted(ctx, rec, { targets, flashFrame, flashAge }, color) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    for (const t of targets) {
+      const [px, py] = this.toPx(t.latDeg, t.lonDeg);
+      ctx.beginPath();
+      ctx.moveTo(px, py - 3); ctx.lineTo(px + 3, py); ctx.lineTo(px, py + 3); ctx.lineTo(px - 3, py);
+      ctx.fill();
+    }
+    const pxPerKm = this.rect.h / 180 / 111.32;
+    for (const f of rec.frames) {
+      if (f.status === STATUS.NONE) continue;
+      const [px, py] = this.toPx(f.latDeg, f.lonDeg);
+      const size = Math.max(7, 4.5 * pxPerKm); // real frames are sub-pixel at map scale
+      ctx.fillStyle = f.status === STATUS.CLOUD ? this.hatchPattern(ctx) : color;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.lineWidth = 1;
+      ctx.fillRect(px - size / 2, py - size / 2, size, size);
+      ctx.strokeRect(px - size / 2, py - size / 2, size, size);
+    }
+    if (flashFrame && flashAge < 1) {
+      const [px, py] = this.toPx(flashFrame.latDeg, flashFrame.lonDeg);
+      ctx.strokeStyle = `rgba(255, 255, 255, ${1 - flashAge})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px, py, 6 + flashAge * 18, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** Picked place: classic map pin. */
+  drawPin(ctx) {
+    if (!this.pin) return;
+    const [px, py] = this.toPx(this.pin.latDeg, this.pin.lonDeg);
+    ctx.save();
+    ctx.fillStyle = '#ff4d6d';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(px, py - 12, 6, Math.PI, 0);
+    ctx.lineTo(px, py);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(px, py - 12, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   drawMarkers(ctx) {

@@ -50,10 +50,16 @@
   </header>
 
   <main class="views">
-    <section class="panel panel-globe">
-      <div class="panel-label">3D view <span class="hint">drag to rotate · scroll to zoom</span></div>
-      <div id="globe" class="globe-host"></div>
-    </section>
+    <div class="left">
+      <section class="panel panel-globe">
+        <div class="panel-label">3D view <span class="hint">drag to rotate · scroll to zoom</span></div>
+        <div id="globe" class="globe-host"></div>
+      </section>
+      <div class="bottom-strip">
+        <section id="hud" class="panel card hud" aria-live="off"></section>
+        <section id="results" class="panel card results"></section>
+      </div>
+    </div>
     <div class="side">
       <section class="panel panel-map">
         <div class="panel-label">Ground track <span id="map-legend" class="hint legend"></span></div>
@@ -71,7 +77,6 @@
           <div id="closeup-host" class="closeup-host"></div>
         </section>
       </div>
-      <section id="hud" class="panel card hud" aria-live="off"></section>
     </div>
   </main>
 

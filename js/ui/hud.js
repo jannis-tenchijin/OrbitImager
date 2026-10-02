@@ -74,10 +74,12 @@ export const fmt = {
   deg: (d) => `${d.toFixed(2)}°`,
   int: (n) => n.toLocaleString('en-US'),
   urad: (u) => `${u.toFixed(1)} µrad`,
+  /** percent with enough digits for tiny targeted coverage (e.g. 0.00019 %) */
+  pct: (x) => (x === 0 ? '0%' : x < 0.01 ? `${x.toPrecision(2)}%` : `${x.toFixed(x < 10 ? 2 : 1)}%`),
   /** milliseconds with sensible precision */
   ms: (x) => (x >= 1000 ? `${(x / 1000).toFixed(2)} s` : x >= 10 ? `${x.toFixed(1)} ms` : `${x.toFixed(2)} ms`),
   /** microseconds, switching to ms when large */
-  us: (x) => (x >= 1000 ? `${(x / 1000).toFixed(2)} ms` : x >= 10 ? `${x.toFixed(1)} µs` : `${x.toFixed(2)} µs`),
+  us: (x) => (x >= 1e6 ? `${(x / 1e6).toFixed(2)} s` : x >= 1000 ? `${(x / 1000).toFixed(2)} ms` : x >= 10 ? `${x.toFixed(1)} µs` : `${x.toFixed(2)} µs`),
   /** decimal hours -> "HH:MM" */
   hhmm: (h) => {
     const m = Math.round(h * 60) % 1440;

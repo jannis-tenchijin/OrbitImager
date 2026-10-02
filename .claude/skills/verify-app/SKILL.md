@@ -51,6 +51,11 @@ JSON.stringify({ swath: __app.geom.swathKm, gsd: __app.geom.gsdNadirM, f: __app.
 - **● Record** at `10k×`: badge `REC · d · orbits · usable %` keeps running past 1 day; **Stop** holds (`Stopped · …`), **Clear** returns to live.
 - Visual: night passes have no swath ("night: no data"); thermal day + night one color; cloud cells hatched.
 
+- Results: after Stop the Results card shows covered % ≥ usable %; 📍 Pick place → click Tokyo on the map → images / cloudy / usable + "1 image every X days" (Landsat TIRS ~3 d: ~1 image).
+- SatVu: no swath rows (`__app.recorder.samples.length === 0`), frames only at the 80 cities, off-nadir ≤ 30°; 3D pyramid flashes toward each target; close-up shows "Scene #n" + shutter/timeline.
+- Framing what-if (TIRS → Framing): 3D pyramid + tiled previous footprints, not a fan.
+- No page scrollbar at 1280×760, 1440×900, 1920×1080 (`document.documentElement.scrollHeight === innerHeight`) — check the GCOM-C IRS (most tiles) preset too.
+
 ## 9. Mobile layout
 - `resize_window` preset `mobile`, reload. Panels stack; `document.documentElement.scrollWidth === clientWidth` (no horizontal scroll).
 - Reset with preset `desktop` afterward.

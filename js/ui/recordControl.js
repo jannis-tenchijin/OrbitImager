@@ -1,6 +1,8 @@
 // Record control: big red Record / Stop button (header), Clear after stopping, a REC status
 // badge on the map, and the swath legend (depends on the sensor kind).
 
+import { fmt } from './hud.js';
+
 export function createRecordControl({ buttonHost, badge, legend }, palette, { onRecord, onStop, onClear, getMode }) {
   buttonHost.innerHTML = `
     <button class="rec-main" type="button"></button>
@@ -36,20 +38,29 @@ export function createRecordControl({ buttonHost, badge, legend }, palette, { on
       last = now;
       const s = rec.summary();
       if (!s) return;
-      const core = `${s.days.toFixed(1)} d · ${s.orbits} orbits · usable ${s.usablePct.toFixed(1)}%`;
+      const core = `${s.days.toFixed(1)} d · ${s.orbits} orbits · covered ${fmt.pct(s.coveredPct)} · usable ${fmt.pct(s.usablePct)}`;
       if (mode === 'recording') {
         badge.innerHTML = `<span class="rec-live"></span>REC · ${core}`;
         badge.title = `Recording for ${s.days.toFixed(2)} days (${s.orbits} orbits). Usable (cloud-free) coverage: ${s.usablePct.toFixed(1)}% of the globe.`;
       } else if (mode === 'stopped') {
         const why = s.reason === 'buffer full' ? ' · buffer full' : '';
-        badge.textContent = `Stopped · ${core} · cloudy ${s.cloudyPct.toFixed(0)}%${why}`;
+        badge.textContent = `Stopped · ${core}${why}`;
         badge.title = `${s.days.toFixed(2)} days, ${s.orbits} orbits. Usable coverage ${s.usablePct.toFixed(1)}% of the globe; ${s.cloudyPct.toFixed(1)}% of the imaged area was only seen under cloud.${why ? ' Recording stopped at the memory cap.' : ''}`;
       }
     },
 
     /** Swath legend for the active instrument kind. Day and night share one color. */
-    setLegend(inst) {
+    setLegend(inst, { targeted = false } = {}) {
       const color = palette.swath[inst.kind];
+      if (targeted) {
+        legend.innerHTML = [
+          '<i class="sw sw-diamond"></i>80 tasked cities',
+          `<i class="sw sw-box" style="background:${color}"></i>frame`,
+          '<i class="sw sw-box sw-hatch"></i>cloudy',
+          '<i class="sw sw-future"></i>±30° access',
+        ].join('');
+        return;
+      }
       const items = [`<i class="sw sw-box" style="background:${color}"></i>recorded`];
       if (!inst.recordsAtNight) items.push('<i class="sw sw-box sw-none"></i>night: no data');
       items.push(inst.kind === 'sar'

@@ -18,6 +18,12 @@ const SWATH_VERTS = CROSS_CELLS + 1; // recorder rows: 9 points across (8 cells)
 const FAN_SEGMENTS = 16;        // subdivisions of the ground scan arc under the FOV fan
 const WHISK_BEAM_HALF = 0.025;    // beam half-width as a fraction of the swath (for visibility)
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
+const MAX_FRAME_MARKERS = 6000;
+const FRAME_MARKER_KM = 45;   // targeted frames are drawn at least this big (real: ~4 km)
+const TILE_OUTLINES = 5;      // previous framing exposures shown tiled along the track
+/** Planet-fixed unit vector -> planetGroup-local scene position at radius r (scene units). */
+const fixedToLocal = (u, r, out = new THREE.Vector3()) => out.set(u[0] * r, u[2] * r, -u[1] * r);
 
 /** ECI or ECEF km vector -> scene units (Y-up). */
 export function toScene(v, out = new THREE.Vector3()) {
@@ -290,6 +296,140 @@ export class Globe {
     // Bright scan line on the ground = the detector array's current footprint
     this.scanLine = this.makeFatLine(new THREE.Color(0xffffff), 3);
     this.scene.add(this.scanLine);
+    this.buildFramingViz();
+  }
+
+  /**
+   * Framing camera visuals (planet-fixed group so footprints stay on the ground):
+   * a square pyramid from the satellite to the frame footprint, footprint outlines of previous
+   * exposures, recorded tasked frames, target dots and the picked-place pin.
+   */
+  buildFramingViz() {
+    const pg = this.planetGroup;
+    const fg = new THREE.BufferGeometry();
+    fg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(5 * 3), 3));
+    fg.setIndex([0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1]);
+    this.frustumMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+    this.frustum = new THREE.Mesh(fg, this.frustumMat);
+    this.frustum.frustumCulled = false;
+    pg.add(this.frustum);
+    const eg = new THREE.BufferGeometry();
+    eg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(16 * 3), 3));
+    this.frustumEdges = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 }));
+    this.frustumEdges.frustumCulled = false;
+    pg.add(this.frustumEdges);
+
+    this.tiles = Array.from({ length: TILE_OUTLINES }, () => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(4 * 3), 3));
+      const loop = new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 }));
+      loop.frustumCulled = false;
+      pg.add(loop);
+      return loop;
+    });
+
+    this.frameMarkers = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+      MAX_FRAME_MARKERS
+    );
+    this.frameMarkers.count = 0;
+    this.frameMarkers.frustumCulled = false;
+    pg.add(this.frameMarkers);
+    this.frameMarkerVersion = -1;
+
+    this.pin = new THREE.Group();
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 8), new THREE.MeshBasicMaterial({ color: 0xff4d6d }));
+    head.position.y = 0.16;
+    const stem = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.14, 10), new THREE.MeshBasicMaterial({ color: 0xff4d6d }));
+    stem.rotation.x = Math.PI;
+    stem.position.y = 0.07;
+    this.pin.add(head, stem);
+    this.pin.visible = false;
+    pg.add(this.pin);
+  }
+
+  /** Faint dots for the tasked targets (built once, toggled per instrument). */
+  setTargets(targets) {
+    if (!this.targetDots) {
+      const pos = new Float32Array(targets.length * 3);
+      const v = new THREE.Vector3();
+      targets.forEach((t, i) => fixedToLocal(t.u, this.R * 1.003, v).toArray(pos, i * 3));
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      this.targetDots = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 4, sizeAttenuation: false, transparent: true, opacity: 0.75 }));
+      this.planetGroup.add(this.targetDots);
+    }
+  }
+
+  /** Picked place pin (planet-fixed) or null. */
+  setPin(place) {
+    this.pin.visible = !!place;
+    if (!place) return;
+    const u = latLonToEcef(place.latDeg, place.lonDeg, 1);
+    const n = fixedToLocal(u, 1);
+    this.pin.position.copy(n).multiplyScalar(this.R * 1.002);
+    this.pin.quaternion.setFromUnitVectors(Y_AXIS, n);
+  }
+
+  /** Rebuild recorded tasked-frame markers when the recorder's frames changed. */
+  syncFrameMarkers(rec, kind) {
+    if (rec.frameVersion === this.frameMarkerVersion) return;
+    this.frameMarkerVersion = rec.frameVersion;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), n = new THREE.Vector3(), s = new THREE.Vector3();
+    const day = new THREE.Color(this.palette.swath[kind]), cloud = new THREE.Color(this.palette.cloudMask);
+    const size = FRAME_MARKER_KM / SCENE_KM_PER_UNIT;
+    let k = 0;
+    for (const f of rec.frames) {
+      if (f.status === STATUS.NONE || k >= MAX_FRAME_MARKERS) continue;
+      fixedToLocal(f.u, 1, n);
+      q.setFromUnitVectors(Z_AXIS, n);
+      m.compose(n.clone().multiplyScalar(this.R * 1.003), q, s.set(size, size, 1));
+      this.frameMarkers.setMatrixAt(k, m);
+      this.frameMarkers.setColorAt(k, f.status === STATUS.CLOUD ? cloud : day);
+      k++;
+    }
+    this.frameMarkers.count = k;
+    this.frameMarkers.instanceMatrix.needsUpdate = true;
+    if (this.frameMarkers.instanceColor) this.frameMarkers.instanceColor.needsUpdate = true;
+  }
+
+  /**
+   * framing: { corners (4 planet-fixed units) | null, flash 0..1, tiles: [corners...] }.
+   * Draws the pyramid from the satellite (world p) to the footprint, plus tiled outlines.
+   */
+  updateFraming(p, framing) {
+    const show = !!(framing && framing.corners);
+    this.frustum.visible = this.frustumEdges.visible = show;
+    for (let i = 0; i < this.tiles.length; i++) {
+      const c = framing?.tiles?.[i];
+      this.tiles[i].visible = !!c;
+      if (!c) continue;
+      const pos = this.tiles[i].geometry.attributes.position;
+      const v = new THREE.Vector3();
+      c.forEach((u, j) => pos.setXYZ(j, ...fixedToLocal(u, this.R * 1.004, v).toArray()));
+      pos.needsUpdate = true;
+      this.tiles[i].material.opacity = 0.55 - i * 0.09;
+    }
+    if (!show) return;
+    this.planetGroup.updateMatrixWorld();
+    const apex = this.planetGroup.worldToLocal(p.clone());
+    const base = framing.corners.map((u) => fixedToLocal(u, this.R * 1.004));
+    const fp = this.frustum.geometry.attributes.position;
+    fp.setXYZ(0, apex.x, apex.y, apex.z);
+    base.forEach((b, j) => fp.setXYZ(j + 1, b.x, b.y, b.z));
+    fp.needsUpdate = true;
+    const ep = this.frustumEdges.geometry.attributes.position;
+    let k = 0;
+    for (let j = 0; j < 4; j++) {
+      ep.setXYZ(k++, apex.x, apex.y, apex.z);
+      ep.setXYZ(k++, base[j].x, base[j].y, base[j].z);
+      ep.setXYZ(k++, base[j].x, base[j].y, base[j].z);
+      ep.setXYZ(k++, base[(j + 1) % 4].x, base[(j + 1) % 4].y, base[(j + 1) % 4].z);
+    }
+    ep.needsUpdate = true;
+    this.frustumMat.opacity = 0.12 + 0.5 * framing.flash;
+    this.frustumEdges.material.opacity = 0.45 + 0.55 * framing.flash;
   }
 
   /** Recolor fan/rays and swap the instrument model (scan type + kind; SAR gets an antenna). */
@@ -297,6 +437,10 @@ export class Globe {
     const color = new THREE.Color(this.palette.swath[inst.kind]);
     this.fanMat.color.copy(color);
     this.rayMat.color.copy(color);
+    this.frustumMat.color.copy(color);
+    this.targeted = inst.imaging === 'targeted';
+    if (this.targetDots) this.targetDots.visible = this.targeted;
+    this.frameMarkers.visible = this.targeted;
     this.scan = inst.kind === 'sar' ? 'sar' : scan;
     this.sat.setInstrument(this.scan, inst.kind, { lookSide: inst.lookSide });
   }
@@ -498,7 +642,7 @@ export class Globe {
    *          pastTrack [{latDeg, lonDeg}], edges {left, right} (rad), beam, recorder, tail, cloudSystems }
    *  beam: null for pushbroom, { active, sweep, phase } for whiskbroom.
    */
-  update({ pos, vel, theta, sunDir, orbitPath, pastTrack, edges, beam, recorder, tail, cloudSystems }) {
+  update({ pos, vel, theta, sunDir, orbitPath, pastTrack, edges, beam, recorder, tail, cloudSystems, framing, kind }) {
     // Planet rotation (ECEF -> ECI is +theta about the pole, i.e. +theta about scene Y)
     this.planetGroup.rotation.y = theta;
     this.updateClouds(cloudSystems);
@@ -556,6 +700,12 @@ export class Globe {
     // Recorded swath (planet-fixed) and live FOV fan / whisk beam (inertial)
     this.syncSwath(recorder, tail);
     this.updateFan(p, pos, vel, edges, beam);
+    // Framing cameras: pyramid + footprints instead of the pushbroom fan / scan line
+    const isFraming = this.scan === 'framing';
+    if (isFraming) this.fan.visible = this.scanLine.visible = this.fanRays.visible = false;
+    else this.fanRays.visible = true;
+    this.updateFraming(p, isFraming ? framing : null);
+    if (this.targeted) this.syncFrameMarkers(recorder, kind);
 
     // First frame: put the camera above the satellite, slightly ahead and north
     if (!this.framed) {

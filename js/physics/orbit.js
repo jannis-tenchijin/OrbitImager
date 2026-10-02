@@ -239,6 +239,25 @@ export function swathEdgesEci(pos, vel, cosLam, sinLam) {
   };
 }
 
+/**
+ * Planet-fixed corners of a framing exposure taken at tMs: cross-track between the signed edge
+ * angles, along-track ±alongKm/2 around nadir. Order: back-left, front-left, front-right, back-right.
+ */
+export function frameFootprint(orbit, tMs, edges, alongKm) {
+  const st = propagate(orbit, tMs);
+  const R = orbit.planet.radiusKm;
+  const r = Math.hypot(...st.pos);
+  const u = st.pos.map((x) => x / r);
+  const n = crossTrackPointEci(st.pos, st.vel, Math.PI / 2); // orbit normal (left of track)
+  const a = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]]; // n x r = along-track
+  const ha = alongKm / (2 * R);
+  return [[-1, edges.left], [1, edges.left], [1, edges.right], [-1, edges.right]].map(([sa, lam]) => {
+    const p = [0, 1, 2].map((k) => Math.cos(lam) * (Math.cos(sa * ha) * u[k] + Math.sin(sa * ha) * a[k]) + Math.sin(lam) * n[k]);
+    const len = Math.hypot(...p);
+    return eciToEcef(p.map((x) => x / len), st.theta);
+  });
+}
+
 /** Closed orbit ellipse in ECI with elements frozen at tMs (for drawing the orbit line). */
 export function orbitPath(orbit, tMs, samples) {
   const { raan, argp } = elementsAt(orbit, tMs);

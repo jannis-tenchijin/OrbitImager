@@ -5,7 +5,8 @@ import { PLANETS, DEFAULT_ORBIT, SENSOR_PRESETS, SATELLITES, CLOUDS } from '../j
 import { createOrbit, retargetOrbit, subSatellitePoint, orbitalPeriod } from '../js/physics/orbit.js';
 import { sensorGeometry, groundSpeedKmS, instrumentGeometry, nativeFovDeg, swathWidth } from '../js/physics/sensor.js';
 import { resolveCatalog, fromPublished } from '../js/physics/instruments.js';
-import { SwathRecorder, STATUS } from '../js/sim/recorder.js';
+import { SwathRecorder, STATUS, quadContains } from '../js/sim/recorder.js';
+import { TARGETS } from '../js/geo/targets.js';
 import { createCloudField } from '../js/geo/clouds.js';
 
 const earth = PLANETS.earth;
@@ -228,6 +229,87 @@ test('Framing camera (SatVu): frame period = frame rows × line time, dwell = fr
   const g = sensorGeometry(earth, 530, CAT.satvu.instruments.mwir);
   near(g.timing.framePeriodMs, 1290 * g.timing.lineTimeMs, 1e-9, 'frame period');
   near(g.timing.dwellUs, g.timing.framePeriodMs * 1000, 1e-6, 'dwell');
+});
+
+describe('Results: coverage + place statistics');
+
+const unitOf = (lat, lon) => [Math.cos(lat * DEG) * Math.cos(lon * DEG), Math.cos(lat * DEG) * Math.sin(lon * DEG), Math.sin(lat * DEG)];
+
+test('Summary: Earth covered ≥ usable; all-cloud → covered > 0, usable 0', () => {
+  const s = thermalRun.rec.summary();
+  assert(s.coveredPct >= s.usablePct, `${s.coveredPct} < ${s.usablePct}`);
+  const c = runRecording(TIR, { isCloudy: () => true }, 3).rec.summary();
+  assert(c.coveredPct > 0 && c.usablePct === 0, `covered ${c.coveredPct}, usable ${c.usablePct}`);
+});
+
+const tokyo = unitOf(35.68, 139.69);
+const tirs16 = (() => {
+  const inst = CAT.landsat89.instruments.tirs;
+  const orbit = createOrbit(earth, { ...DEFAULT_ORBIT, ...SATELLITES.landsat89.orbit }, epoch);
+  const rec = new SwathRecorder(orbit, { clouds: createCloudField(CLOUDS, earth.radiusKm), maxRows: 1e6 });
+  const g = sensorGeometry(earth, 705, inst);
+  rec.configure({ edges: g.edges, kind: 'thermal', recordsAtNight: true });
+  rec.startRecording(epoch);
+  rec.advance(epoch + 16 * 24 * H);
+  return rec;
+})();
+
+test('Landsat TIRS, 16 days over Tokyo: day + night images, cloudy + usable = images', () => {
+  const p = tirs16.placeStats(tokyo);
+  assert(p.images >= 2 && p.images <= 8, `images ${p.images}`); // 16-day repeat: ~1 day + ~1 night pass (+ edge overlaps)
+  near(p.cloudy + p.usable, p.images, 0, 'cloudy + usable');
+  near(p.everyDays, p.days / p.images, 1e-9, 'every X days');
+  near(p.days, 16, 0.01, 'duration');
+});
+
+test('Visual records the day pass only; the night pass counts as "no data"', () => {
+  const orbit = createOrbit(earth, DEFAULT_ORBIT, epoch);
+  const mk = (preset) => {
+    const rec = new SwathRecorder(orbit);
+    // 110° whiskbroom (~2300 km swath): every near-equator point gets day AND night passes daily
+    rec.configure({ edges: sensorGeometry(earth, 700, preset, 110, 'whiskbroom').edges, kind: preset.kind, recordsAtNight: preset.recordsAtNight });
+    rec.startRecording(epoch);
+    rec.advance(epoch + 3 * 24 * H);
+    return rec;
+  };
+  // A point right under the first descending (day) pass
+  const p0 = subSatellitePoint(orbit, epoch);
+  const u = unitOf(p0.latDeg, p0.lonDeg);
+  const t = mk(TIR).placeStats(u), v = mk(VIS).placeStats(u);
+  assert(t.images > v.images && v.nightNoData > 0 && t.nightNoData === 0, `thermal ${t.images}, visual ${v.images} (+${v.nightNoData} night)`);
+});
+
+describe('SatVu: tasked frames (no strip)');
+
+const satvu = (() => {
+  const inst = CAT.satvu.instruments.mwir;
+  const orbit = createOrbit(earth, { ...DEFAULT_ORBIT, ...SATELLITES.satvu.orbit }, epoch);
+  const rec = new SwathRecorder(orbit);
+  const g = sensorGeometry(earth, 530, inst);
+  rec.configure({ edges: g.edges, kind: 'thermal', recordsAtNight: true, imaging: g.imaging, targets: TARGETS, accessLam: g.accessLam, frameKm: g.frameKm });
+  rec.startRecording(epoch);
+  rec.advance(epoch + 2 * 24 * H);
+  return { rec, g };
+})();
+
+test('80 fixed targets; 2 days → frames only at targets, no strip rows, off-nadir ≤ 30°', () => {
+  near(TARGETS.length, 80, 0, 'targets');
+  const { rec, g } = satvu;
+  assert(rec.samples.length === 0, 'no strip rows');
+  assert(rec.frames.length > 20, `frames ${rec.frames.length}`);
+  near(g.frameKm.along, 4.5, 0.05, 'frame length');
+  for (const f of rec.frames) {
+    assert(f.offNadirDeg <= 30.01, `${f.name} off-nadir ${f.offNadirDeg}`);
+    assert(quadContains(f.corners, TARGETS[f.targetId].u), `${f.name} frame misses its target`);
+  }
+});
+
+test('A tasked city gets images; a random non-target place gets none', () => {
+  const imaged = satvu.rec.frames[0];
+  assert(satvu.rec.placeStats(TARGETS[imaged.targetId].u).images >= 1, 'target imaged');
+  near(satvu.rec.placeStats(unitOf(-20, -140)).images, 0, 0, 'mid-Pacific'); // no city there
+  const s = satvu.rec.summary();
+  assert(s.coveredPct > 0 && s.coveredPct < 0.01, `covered ${s.coveredPct}%`); // 80 × 16 km² ≪ Earth
 });
 
 describe('Cloud field');

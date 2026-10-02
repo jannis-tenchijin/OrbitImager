@@ -81,7 +81,9 @@ button { font: inherit; color: inherit; }
   padding: 0 var(--gap) var(--gap);
   min-height: 0;
 }
-.side { display: flex; flex-direction: column; gap: var(--gap); min-height: 0; min-width: 0; overflow-y: auto; }
+.left, .side { display: flex; flex-direction: column; gap: var(--gap); min-height: 0; min-width: 0; }
+.left .panel-globe { flex: 1 1 auto; min-height: 200px; }
+.bottom-strip { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: var(--gap); flex: none; }
 .panel {
   position: relative;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0)) var(--panel);
@@ -92,7 +94,7 @@ button { font: inherit; color: inherit; }
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 .panel-globe { background: transparent; }
-.panel-map { flex: none; aspect-ratio: 1.95; }
+.panel-map { flex: 1 1 auto; min-height: 180px; } /* map flexes; Map2D letterboxes 2:1 inside */
 .panel-label {
   position: absolute; top: 10px; left: 14px; z-index: 2;
   font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px;
@@ -104,6 +106,7 @@ button { font: inherit; color: inherit; }
 .sw-future { background: repeating-linear-gradient(90deg, #fff 0 4px, transparent 4px 7px); }
 .sw-box { width: 10px; height: 10px; border-radius: 2px; opacity: 0.85; }
 .sw-none { background: transparent; border: 1px dashed var(--muted); }
+.sw-diamond { width: 7px; height: 7px; background: rgba(255, 255, 255, 0.8); transform: rotate(45deg); border-radius: 1px; }
 .sw-hatch { background: repeating-linear-gradient(135deg, #e9edf5 0 1.5px, #3f4555 1.5px 4px); opacity: 1; }
 
 /* Record: big red button in the header + REC badge on the map */
@@ -121,7 +124,7 @@ button { font: inherit; color: inherit; }
 .rec-host[data-mode="recording"] .rec-main { animation: recpulse 1.2s ease-in-out infinite; }
 @keyframes recpulse { 50% { box-shadow: 0 0 0 6px rgba(229, 56, 59, 0.3), 0 4px 14px rgba(229, 56, 59, 0.45); } }
 .rec-badge {
-  position: absolute; top: 6px; right: 10px; z-index: 3; max-width: 62%;
+  position: absolute; bottom: 10px; right: 12px; z-index: 3; max-width: 70%;
   padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
   font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   background: rgba(11, 16, 38, 0.85); border: 1px solid var(--panel-edge);
@@ -147,7 +150,8 @@ button { font: inherit; color: inherit; }
 
 /* --- Cards (sensor, close-up, orbit) --- */
 .cards { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap); flex: none; }
-.card { padding: 12px 14px; }
+.card { overflow: auto; } /* fallback: a card may scroll internally, never the page */
+.card { padding: 10px 12px; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 .card-head .hint { font-size: 11px; color: var(--muted); }
 .card-title {
@@ -157,14 +161,14 @@ button { font: inherit; color: inherit; }
 .card-title.accent { color: var(--accent); }
 .card .segmented button { padding: 4px 10px; font-size: 12.5px; }
 
-.sensor-sub { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
+.sensor-sub { font-size: 11.5px; color: var(--muted); margin-bottom: 6px; }
 .slider-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px; }
 .slider-row label { font-weight: 700; font-size: 13px; }
 .slider-row input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
 .slider-value { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 48px; text-align: right; color: var(--accent); }
 .icon-btn.small { width: 28px; height: 26px; font-size: 15px; color: var(--text); }
-.slider-note { font-size: 10.5px; color: var(--muted); margin: 2px 0 10px; }
-.scan-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.slider-note { font-size: 10.5px; color: var(--muted); margin: 2px 0 8px; }
+.scan-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
 .preset-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
 .select-wrap { display: flex; align-items: center; gap: 8px; }
 .sat-select {
@@ -179,24 +183,31 @@ button { font: inherit; color: inherit; }
 .hud .slider-row { margin-bottom: 2px; }
 
 .closeup-card { display: flex; flex-direction: column; }
-.closeup-host { position: relative; flex: 1 1 auto; min-height: 210px; }
+.closeup-host { position: relative; flex: 1 1 auto; min-height: 200px; }
 .closeup-host canvas { position: absolute; inset: 0; display: block; }
+
+/* --- Results card --- */
+.results-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
+.place-row { display: flex; align-items: center; gap: 8px; margin: 8px 0 6px; flex-wrap: wrap; }
+.place-name { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text); }
+.pick-btn.armed { background: rgba(255, 77, 109, 0.25); border-color: #ff4d6d; }
+.place-note { font-size: 10.5px; color: var(--muted); margin: 4px 0 0; }
 
 /* --- Tiles --- */
 .hud { flex: none; }
 .hud .card-title { margin-bottom: 6px; }
-.hud-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
+.hud-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 4px; }
 .hud-tile {
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid var(--panel-edge);
   border-radius: 10px;
-  padding: 5px 10px;
-  display: flex; flex-direction: column; gap: 1px;
+  padding: 3px 8px;
+  display: flex; flex-direction: column; gap: 0;
   min-width: 0;
 }
 .hud-tile.wide { grid-column: span 2; }
-.hud-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hud-value { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.hud-label { font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud-value { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
 .hud-tile.fixed .hud-value { color: var(--muted); }
 .hud-tile.flash { animation: flash 0.7s ease-out; }
 @keyframes flash {
@@ -204,15 +215,31 @@ button { font: inherit; color: inherit; }
 }
 
 /* --- Narrow screens: stack panels, allow page scroll --- */
+/* Short desktop windows: drop explanatory notes, tighten cards (layout stays the same) */
+@media (max-height: 860px) and (min-width: 901px) {
+  .slider-note { display: none; }
+  .card { padding: 8px 10px; }
+  .card-head { margin-bottom: 3px; }
+  .sensor-sub { margin-bottom: 4px; }
+  .scan-row { margin-bottom: 5px; }
+  .preset-row { margin-bottom: 4px; }
+  .topbar { padding: 6px 16px; }
+  .rec-main { height: 32px; }
+}
+
 @media (max-width: 1100px) {
   .cards { grid-template-columns: minmax(0, 1fr); }
+  .side { overflow-y: auto; } /* stacked cards: scroll inside the column, not the page */
   .closeup-host { flex: none; aspect-ratio: 2.1; min-height: 0; }
 }
 @media (max-width: 900px) {
   body { overflow: auto; height: auto; min-height: 100%; }
   .views { grid-template-columns: minmax(0, 1fr); }
+  .bottom-strip { grid-template-columns: minmax(0, 1fr); }
+  .panel-map { flex: none; aspect-ratio: 1.95; }
+  .card { overflow: visible; }
   .side { overflow: visible; }
-  .panel-globe { height: 62vh; min-height: 320px; }
+  .left .panel-globe { flex: none; height: 62vh; min-height: 320px; }
   .panel-label .hint { display: none; }
   .topbar { padding: 10px 16px; }
 }

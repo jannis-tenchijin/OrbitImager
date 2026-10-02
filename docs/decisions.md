@@ -112,7 +112,7 @@ Presets are Landsat 8/9-like: thermal ≈ TIRS (1850 px, 25 µm, 142.5 µrad →
 **What:** `SATELLITES` in `js/config.js` (Landsat 8/9, GCOM-C, Sentinel-1/2, constellr HiVE, SatVu HotSat, ALOS-2/4, Custom). Optical instruments store the **published nadir GSD + swath** at the mission altitude; `fromPublished()` (`js/physics/instruments.js`) inverts the spherical swath formula (`tan η = sin λ / (k − cos λ)`) → native IFOV and pixel count, so native swath/GSD reproduce the published numbers (tested ≤ 1%). Detector pitch is used for the focal-length tile; where not public it is `null` ("n/a") or flagged in `approx` (shown as "≈ …" in the UI).
 **Cross-checks (tests):** TIRS → 1,838 px / 176 mm (published 1,850 / 176.7 mm); SGLI-IRS → 80° FOV / 447 mm (published 80° / 448 mm); MSI → 590 mm (≈ 600); OLI → 886 mm (886).
 **Sources (research 2026-10-02):** USGS/NASA (Landsat), JAXA EORC + SPIE 2014 (SGLI), SentiWiki (Sentinel-1/2), ESA eoGateway + eoPortal (constellr, SatVu), JAXA EORC (PALSAR-2/3). Status notes: Sentinel-1A ended 2026-06-30 (1C/1D active); SatVu HotSat-1 failed 2023, HotSat-2 operational since 2026-06-29.
-**Approximations:** constellr pitch + LTDN, SatVu altitude (500–536 km) / LTDN / frame size, SAR beam-center incidences and looks. SatVu images targeted scenes; the sim shows a continuous strip.
+**Approximations:** constellr pitch + LTDN, SatVu altitude (500–536 km) / LTDN / frame size / agility, SAR beam-center incidences and looks.
 
 ## Presets set the orbit; altitude slider re-targets it (2026-10-02)
 **What:** Selecting a satellite sets its altitude + LTDN. `retargetOrbit()` builds the new orbit at the current time with the **same argument of latitude** (and the same plane if LTDN is unchanged); the SSO inclination is recomputed, so near the turning latitudes the satellite can shift by up to Δi (~0.8° for 700 → 900 km) — physical, tested. Recorded rows are kept (`recorder.setOrbit`).
@@ -124,3 +124,17 @@ Presets are Landsat 8/9-like: thermal ≈ TIRS (1850 px, 25 µm, 142.5 µrad →
 
 ## Framing scan type (2026-10-02)
 **What:** Staring 2-D array (SatVu): frame period = frameRows × line time (no gap), dwell up to the frame period; close-up exposes whole frames at once. Third option in the Scan switch.
+
+## SatVu = tasked frames of 80 fixed cities (2026-10-02)
+**What:** `imaging: 'targeted'` (only with its framing scan; a what-if scan switch makes it a strip). `js/geo/targets.js` holds a fixed list of 80 major cities (Jannis: no user-added targets). Each recorder step detects targets passing abeam (sign change of their along-track coordinate) within ±30° off-nadir (≈ ±310 km at 530 km) and stores one 3.5 × 4.5 km frame with its status. No strip rows. Coverage % = unique imaged targets × frame area (≈ 0.0002 % of Earth — the point).
+**Display:** frames are sub-pixel on map/globe, so markers are drawn ≥ 7 px / 45 km and the 3D shot pyramid's footprint ≥ 60 km. Picked places snap to a listed city within 150 km (a map pixel is ~50 km).
+
+## Results + place statistics (2026-10-02)
+**What:** Results card (under the 3D view): duration, orbits, **Earth covered %** (imaged incl. cloudy) and **Usable %** (cloud-free). Pick a place → `recorder.placeStats(u)`: recorded cells containing u, grouped into passes (gap > 10 min); image = recorded pass (visual night passes counted separately as "no data"), cloudy if the covering cells were mostly `CLOUD`. Shows images / cloudy / usable and **1 image every X d** + **1 usable image every Y d** (duration ÷ count). No per-image list (Jannis).
+
+## Framing visuals (2026-10-02)
+**What:** 3D: square pyramid from the satellite to the current frame footprint (`frameFootprint`), previous 5 exposures tiled as outlines (strip framing), or a flash toward each tasked target (SatVu). Close-up: periodic exposure cycle — shutter flash → whole frame at once → hold → "shutter closed" + timeline ticks — so it reads as snapshots, not continuous recording.
+
+## One-window layout (2026-10-02)
+**What:** No page scrollbar on desktop. Left: 3D view (flex) over [Orbit | Results]; right: map (flex, Map2D letterboxes) over [Sensor | close-up]. Compact tiles; below 860 px window height the explanatory slider notes hide. Verified at 1280×760, 1440×900, 1920×1080 for all presets (`scrollHeight === innerHeight`). Phones (< 900 px) stack and scroll.
+**Breaks if:** cards get `flex: 1` or fixed heights, or new content is added to the cards without checking 1280×760.

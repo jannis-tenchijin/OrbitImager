@@ -114,7 +114,12 @@ export const SATELLITES = {
     name: 'SatVu HotSat', operator: 'Satellite Vu',
     orbit: { altitudeKm: 530, ltdnHours: 10.5 },
     instruments: {
-      mwir: { kind: 'thermal', label: 'MWIR', band: 'MWIR 3.7–5 µm', scan: 'framing', gsdM: 3.5, swathKm: 3.5, detectorPitchUm: 8, frameRows: 1290, whiskRowsPerSweep: 10, recordsAtNight: true, note: 'staring frames; targeted scenes shown as a strip', approx: ['altitude', 'LTDN', 'frame size'] },
+      mwir: {
+        kind: 'thermal', label: 'MWIR', band: 'MWIR 3.7–5 µm', scan: 'framing', gsdM: 3.5, swathKm: 3.5, detectorPitchUm: 8,
+        frameRows: 1290, whiskRowsPerSweep: 10, recordsAtNight: true,
+        imaging: 'targeted', maxOffNadirDeg: 30, // tasked frames of TARGETS only, agile ±30° off-nadir
+        note: 'tasked 3.5 × 4.5 km frames of 80 cities', approx: ['altitude', 'LTDN', 'frame size', 'agility ±30°'],
+      },
     },
   },
   alos2: {

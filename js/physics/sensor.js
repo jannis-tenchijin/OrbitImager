@@ -95,10 +95,18 @@ export function sensorGeometry(planet, altitudeKm, preset, fovDeg = nativeFovDeg
   const swathKm = swathWidth(planet.radiusKm, altitudeKm, half);
   const gsdNadirM = altitudeKm * 1000 * ifov;
   const lam = Number.isFinite(swathKm) ? swathKm / (2 * planet.radiusKm) : 0;
+  const k = (planet.radiusKm + altitudeKm) / planet.radiusKm;
+  // Targeted imagers (SatVu): discrete frames of tasked targets within the agility limit
+  const imaging = preset.imaging ?? 'strip';
+  const accessLam = preset.maxOffNadirDeg ? lookToCentral(preset.maxOffNadirDeg * DEG, k) : 0;
   return {
     id: preset.id,
     kind: preset.kind,
     scan,
+    imaging,
+    accessLam,
+    accessKm: accessLam * planet.radiusKm,
+    frameKm: { cross: swathKm, along: ((preset.frameRows ?? 512) * gsdNadirM) / 1000 },
     edges: { left: lam, right: -lam },        // signed Earth-central edge angles (+ = left)
     gsdXM: gsdNadirM, gsdYM: gsdNadirM,       // pixel footprint cross-/along-track (square)
     timing: scanTiming(planet, altitudeKm, preset, scan, gsdNadirM, fov),
