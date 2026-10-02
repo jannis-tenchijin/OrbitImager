@@ -40,6 +40,22 @@ export function sunEci(ms) {
   return { dir, ra };
 }
 
+/**
+ * Right ascension of the MEAN sun (rad) = mean longitude L. Sun-synchronous orbits precess at
+ * the mean-sun rate, so LTAN/LTDN are defined in mean solar time (UTC + lon/15). Using the
+ * apparent sun instead would be off by the equation of time (up to +/-16 min).
+ */
+export function meanSunRa(ms) {
+  const n = julianDate(ms) - J2000_JD;
+  return wrapTwoPi((280.46 + 0.9856474 * n) * DEG);
+}
+
+/** Local mean solar time (hours, 0..24) at a longitude. */
+export function meanLocalTime(lonDeg, ms) {
+  const utcHours = (((ms / 3600000) % 24) + 24) % 24;
+  return (((utcHours + lonDeg / 15) % 24) + 24) % 24;
+}
+
 export function wrapTwoPi(x) {
   const t = x % (2 * Math.PI);
   return t < 0 ? t + 2 * Math.PI : t;

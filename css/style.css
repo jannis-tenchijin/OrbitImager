@@ -69,19 +69,8 @@ button { font: inherit; color: inherit; }
 }
 .segmented button.active { background: var(--accent); color: var(--bg); font-weight: 700; }
 
-.toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--muted); user-select: none; }
-.toggle input { position: absolute; opacity: 0; pointer-events: none; }
-.toggle-track {
-  width: 34px; height: 20px; border-radius: 999px; background: var(--chip);
-  border: 1px solid var(--panel-edge); position: relative; transition: background 0.15s;
-}
-.toggle-thumb {
-  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
-  background: var(--muted); transition: transform 0.15s, background 0.15s;
-}
-.toggle input:checked + .toggle-track { background: rgba(255, 209, 102, 0.25); }
-.toggle input:checked + .toggle-track .toggle-thumb { transform: translateX(14px); background: var(--accent); }
-.toggle input:focus-visible + .toggle-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.view-ctl { display: flex; align-items: center; gap: 8px; }
+.ctl-label { font-size: 12px; color: var(--muted); }
 
 /* --- Views --- */
 .views {
@@ -91,7 +80,7 @@ button { font: inherit; color: inherit; }
   padding: 0 var(--gap) var(--gap);
   min-height: 0;
 }
-.side { display: flex; flex-direction: column; gap: var(--gap); min-height: 0; min-width: 0; }
+.side { display: flex; flex-direction: column; gap: var(--gap); min-height: 0; min-width: 0; overflow-y: auto; }
 .panel {
   position: relative;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0)) var(--panel);
@@ -102,7 +91,7 @@ button { font: inherit; color: inherit; }
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 .panel-globe { background: transparent; }
-.panel-map { flex: none; aspect-ratio: 1.82; max-height: 64%; }
+.panel-map { flex: none; aspect-ratio: 2.08; }
 .panel-label {
   position: absolute; top: 10px; left: 14px; z-index: 2;
   font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px;
@@ -112,6 +101,7 @@ button { font: inherit; color: inherit; }
 .sw { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin: 0 4px 0 8px; }
 .sw-past { background: var(--coral); }
 .sw-future { background: repeating-linear-gradient(90deg, #fff 0 4px, transparent 4px 7px); }
+.sw-swath { height: 8px; background: rgba(255, 159, 67, 0.55); }
 
 .globe-host, .map-host { position: absolute; inset: 0; }
 .globe-host canvas { display: block; outline: none; }
@@ -122,39 +112,61 @@ button { font: inherit; color: inherit; }
   background: rgba(0, 0, 0, 0.5); padding: 6px 12px; border-radius: 999px; font-size: 12px; color: var(--muted);
 }
 
-/* --- Telemetry --- */
-.hud {
-  flex: 1 1 auto;
-  overflow: auto;
-  padding: 12px 14px 14px;
-  display: flex; flex-direction: column; gap: 12px;
-}
-.hud-title {
-  margin: 0 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase;
+/* --- Cards (sensor, close-up, orbit) --- */
+.cards { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap); flex: none; }
+.card { padding: 12px 14px; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.card-head .hint { font-size: 11px; color: var(--muted); }
+.card-title {
+  margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.8px; color: var(--muted);
 }
-.hud-group.accent .hud-title { color: var(--accent); }
-.hud-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 6px; }
+.card-title.accent { color: var(--accent); }
+.card .segmented button { padding: 4px 10px; font-size: 12.5px; }
+
+.sensor-sub { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
+.slider-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px; }
+.slider-row label { font-weight: 700; font-size: 13px; }
+.slider-row input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+.slider-value { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 48px; text-align: right; color: var(--accent); }
+.icon-btn.small { width: 28px; height: 26px; font-size: 15px; color: var(--text); }
+.slider-note { font-size: 10.5px; color: var(--muted); margin: 2px 0 10px; }
+
+.closeup-card { display: flex; flex-direction: column; }
+.closeup-host { position: relative; flex: 1 1 auto; min-height: 210px; }
+.closeup-host canvas { position: absolute; inset: 0; display: block; }
+
+/* --- Tiles --- */
+.hud { flex: none; }
+.hud .card-title { margin-bottom: 6px; }
+.hud-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
 .hud-tile {
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid var(--panel-edge);
   border-radius: 10px;
-  padding: 6px 10px;
+  padding: 5px 10px;
   display: flex; flex-direction: column; gap: 1px;
   min-width: 0;
 }
 .hud-tile.wide { grid-column: span 2; }
-.hud-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.hud-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hud-value { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
-.hud-group.accent .hud-tile { border-color: rgba(255, 209, 102, 0.14); }
+.hud-tile.fixed .hud-value { color: var(--muted); }
+.hud-tile.flash { animation: flash 0.7s ease-out; }
+@keyframes flash {
+  from { border-color: var(--accent); background: rgba(255, 209, 102, 0.16); }
+}
 
 /* --- Narrow screens: stack panels, allow page scroll --- */
+@media (max-width: 1100px) {
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  .closeup-host { flex: none; aspect-ratio: 2.1; min-height: 0; }
+}
 @media (max-width: 900px) {
   body { overflow: auto; height: auto; min-height: 100%; }
   .views { grid-template-columns: minmax(0, 1fr); }
+  .side { overflow: visible; }
   .panel-globe { height: 62vh; min-height: 320px; }
-  .panel-map { max-height: none; }
-  .hud { overflow: visible; }
   .panel-label .hint { display: none; }
   .topbar { padding: 10px 16px; }
 }

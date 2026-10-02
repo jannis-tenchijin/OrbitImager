@@ -1,4 +1,5 @@
-// 3D view: stylized planet, atmosphere, stars, sun, satellite, orbit line, ground trail.
+// 3D view: stylized planet, atmosphere, stars, sun, satellite, orbit line, ground trail,
+// swath strip + sensor FOV fan.
 // Physics is ECI (Z = north). Three.js is Y-up, so ECI (x, y, z) -> scene (x, z, -y).
 // The planet group rotates about Y by the planet rotation angle (GMST for Earth).
 
@@ -10,7 +11,11 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { SCENE_KM_PER_UNIT } from '../config.js';
 import { createSatelliteModel } from './satelliteModel.js';
-import { latLonToEcef } from '../physics/orbit.js';
+import { latLonToEcef, swathEdgesEci } from '../physics/orbit.js';
+
+const SWATH_CROSS_SEGMENTS = 8; // subdivisions across the swath so wide strips hug the sphere
+const FAN_SEGMENTS = 16;        // subdivisions of the ground scan arc under the FOV fan
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
 /** ECI or ECEF km vector -> scene units (Y-up). */
 export function toScene(v, out = new THREE.Vector3()) {
@@ -18,12 +23,13 @@ export function toScene(v, out = new THREE.Vector3()) {
 }
 
 export class Globe {
-  constructor(container, planet, palette, { satelliteScale = 1, instrument = 'pushbroom' } = {}) {
+  constructor(container, planet, palette, { satelliteScale = 1, sensor } = {}) {
     this.container = container;
     this.planet = planet;
     this.palette = palette;
     this.R = planet.radiusKm / SCENE_KM_PER_UNIT;
-    this.follow = false;
+    this.viewMode = 'space'; // 'space' | 'earth' | 'satellite'
+    this.lastTheta = null;
 
     // Renderer / camera / controls
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -46,10 +52,12 @@ export class Globe {
     this.buildPlanet();
     this.buildAtmosphere();
     this.buildOrbitViz();
+    this.buildSwathViz();
 
-    this.sat = createSatelliteModel({ scale: satelliteScale, instrument });
+    this.sat = createSatelliteModel({ scale: satelliteScale, instrument: sensor.scan, band: sensor.id });
     this.scene.add(this.sat.object);
     this.applySatelliteEnvMap();
+    this.setSensor(sensor);
     this.satBeacon = this.makeBeacon();
     this.scene.add(this.satBeacon);
 
@@ -241,6 +249,121 @@ export class Globe {
     this.scene.add(this.subMarker);
   }
 
+  buildSwathViz() {
+    // Recorded swath: triangle strip draped in the planet-fixed frame
+    const cols = SWATH_CROSS_SEGMENTS + 1;
+    this.swathMat = new THREE.MeshBasicMaterial({
+      transparent: true, opacity: 0.38, depthWrite: false, side: THREE.DoubleSide,
+    });
+    this.swathStrip = new THREE.Mesh(new THREE.BufferGeometry(), this.swathMat);
+    this.swathStrip.frustumCulled = false;
+    this.swathStrip.userData.cols = cols;
+    this.planetGroup.add(this.swathStrip);
+
+    // FOV fan: satellite apex + ground scan arc (inertial frame)
+    const fanGeo = new THREE.BufferGeometry();
+    fanGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((FAN_SEGMENTS + 2) * 3), 3));
+    const idx = [];
+    for (let j = 1; j <= FAN_SEGMENTS; j++) idx.push(0, j, j + 1);
+    fanGeo.setIndex(idx);
+    this.fanMat = new THREE.MeshBasicMaterial({
+      transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+    });
+    this.fan = new THREE.Mesh(fanGeo, this.fanMat);
+    this.fan.frustumCulled = false;
+    this.scene.add(this.fan);
+
+    // Fan edge rays (satellite -> swath edges)
+    const rayGeo = new THREE.BufferGeometry();
+    rayGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(4 * 3), 3));
+    this.rayMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.85 });
+    this.fanRays = new THREE.LineSegments(rayGeo, this.rayMat);
+    this.fanRays.frustumCulled = false;
+    this.scene.add(this.fanRays);
+
+    // Bright scan line on the ground = the detector array's current footprint
+    this.scanLine = this.makeFatLine(new THREE.Color(0xffffff), 3);
+    this.scene.add(this.scanLine);
+  }
+
+  /** Recolor swath/fan and swap the instrument model for a sensor preset. */
+  setSensor(preset) {
+    const color = new THREE.Color(this.palette.swath[preset.id]);
+    this.swathMat.color.copy(color);
+    this.fanMat.color.copy(color);
+    this.rayMat.color.copy(color);
+    this.sat.setInstrument(preset.scan, preset.id);
+  }
+
+  /**
+   * Camera reference frame:
+   *  space     - camera fixed in inertial space, Earth rotates beneath
+   *  earth     - camera co-rotates with Earth (stays over the same country)
+   *  satellite - camera looks down on the satellite
+   */
+  setViewMode(mode) {
+    this.viewMode = mode;
+  }
+
+  /** Rebuild the draped swath strip from swathTrack() samples (planet-fixed lat/lon). */
+  updateSwathStrip(track) {
+    const cols = this.swathStrip.userData.cols;
+    const geo = this.swathStrip.geometry;
+    const n = track.length;
+    let pos = geo.getAttribute('position');
+    if (!pos || pos.count !== n * cols) {
+      pos = new THREE.BufferAttribute(new Float32Array(n * cols * 3), 3);
+      geo.setAttribute('position', pos);
+      const idx = [];
+      for (let i = 1; i < n; i++) {
+        for (let c = 1; c < cols; c++) {
+          const a = (i - 1) * cols + c - 1, b = i * cols + c - 1;
+          idx.push(a, b, a + 1, b, b + 1, a + 1);
+        }
+      }
+      geo.setIndex(idx);
+    }
+    const r = (this.planet.radiusKm + 12) / SCENE_KM_PER_UNIT; // just above the faceted surface
+    const L = new THREE.Vector3(), Rv = new THREE.Vector3(), v = new THREE.Vector3();
+    for (let i = 0; i < n; i++) {
+      toScene(latLonToEcef(track[i].left.latDeg, track[i].left.lonDeg, 1000), L);
+      toScene(latLonToEcef(track[i].right.latDeg, track[i].right.lonDeg, 1000), Rv);
+      for (let c = 0; c < cols; c++) {
+        v.lerpVectors(L, Rv, c / (cols - 1)).setLength(r); // normalized lerp across the swath
+        pos.setXYZ(i * cols + c, v.x, v.y, v.z);
+      }
+    }
+    pos.needsUpdate = true;
+  }
+
+  /** FOV fan + ground scan line for the current state (inertial frame). */
+  updateFan(p, pos, vel, swathKm) {
+    const lam = Number.isFinite(swathKm) ? swathKm / (2 * this.planet.radiusKm) : 0;
+    const { left, right } = swathEdgesEci(pos, vel, Math.cos(lam), Math.sin(lam));
+    const L = toScene(left.map((x) => x * 1000)), Rv = toScene(right.map((x) => x * 1000));
+    const fanPos = this.fan.geometry.attributes.position;
+    fanPos.setXYZ(0, p.x, p.y, p.z);
+    const arc = [];
+    const v = new THREE.Vector3();
+    for (let j = 0; j <= FAN_SEGMENTS; j++) {
+      v.lerpVectors(L, Rv, j / FAN_SEGMENTS).setLength(this.R * 1.002);
+      fanPos.setXYZ(j + 1, v.x, v.y, v.z);
+      v.setLength(this.R * 1.004);
+      arc.push(v.x, v.y, v.z);
+    }
+    fanPos.needsUpdate = true;
+    this.fan.geometry.computeBoundingSphere();
+
+    const rays = this.fanRays.geometry.attributes.position;
+    const e0 = L.setLength(this.R * 1.002), e1 = Rv.setLength(this.R * 1.002);
+    rays.setXYZ(0, p.x, p.y, p.z);
+    rays.setXYZ(1, e0.x, e0.y, e0.z);
+    rays.setXYZ(2, p.x, p.y, p.z);
+    rays.setXYZ(3, e1.x, e1.y, e1.z);
+    rays.needsUpdate = true;
+    this.scanLine.geometry.setPositions(arc);
+  }
+
   /**
    * Metallic materials render black without something to reflect, so the satellite
    * (only) gets a soft studio environment map. The planet stays purely sun-lit.
@@ -297,15 +420,12 @@ export class Globe {
     return m;
   }
 
-  setFollow(on) {
-    this.follow = on;
-  }
-
   /**
    * Per-frame update.
-   * state: { pos, vel (ECI km), theta (rad), sunDir (ECI unit), orbitPath (ECI km[]), past [{latDeg, lonDeg}] }
+   * state: { pos, vel (ECI km), theta (rad), sunDir (ECI unit), orbitPath (ECI km[]),
+   *          past (swathTrack samples), swathKm, nowMs }
    */
-  update({ pos, vel, theta, sunDir, orbitPath, past, nowMs }) {
+  update({ pos, vel, theta, sunDir, orbitPath, past, swathKm, nowMs }) {
     // Planet rotation (ECEF -> ECI is +theta about the pole, i.e. +theta about scene Y)
     this.planetGroup.rotation.y = theta;
     this.clouds.rotation.y = (nowMs / 3.6e6) * 0.15; // slow extra drift for life
@@ -360,6 +480,10 @@ export class Globe {
     }
     this.groundTrail.geometry.setPositions(trail);
 
+    // Recorded swath (planet-fixed) and live FOV fan (inertial)
+    this.updateSwathStrip(past);
+    this.updateFan(p, pos, vel, swathKm);
+
     // First frame: put the camera above the satellite, slightly ahead and north
     if (!this.framed) {
       this.framed = true;
@@ -367,8 +491,15 @@ export class Globe {
       this.camera.position.copy(dir.setLength(this.R * 4.3));
     }
 
-    // Follow mode: swing the camera to look down on the satellite, keeping zoom distance
-    if (this.follow) {
+    // Earth-fixed view: rotate the camera with the planet by the change in rotation angle
+    if (this.viewMode === 'earth' && this.lastTheta !== null) {
+      const d = Math.atan2(Math.sin(theta - this.lastTheta), Math.cos(theta - this.lastTheta));
+      this.camera.position.applyAxisAngle(Y_AXIS, d);
+    }
+    this.lastTheta = theta;
+
+    // Satellite view: swing the camera to look down on the satellite, keeping zoom distance
+    if (this.viewMode === 'satellite') {
       const dist = this.camera.position.length();
       const target = up.clone().multiplyScalar(dist);
       this.camera.position.lerp(target, 0.08).setLength(dist);

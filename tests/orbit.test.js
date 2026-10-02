@@ -1,13 +1,15 @@
 // In-browser physics tests. Open tests/index.html via the local HTTP server.
 // Results render on the page and are exposed on window.__testResults for automation.
 
-import { PLANETS, DEFAULT_ORBIT, DEFAULT_SENSOR } from '../js/config.js';
-import { julianDate, rotationAngle, sunEci } from '../js/physics/time.js';
+import { PLANETS, DEFAULT_ORBIT, SENSOR_PRESETS } from '../js/config.js';
+import { julianDate, rotationAngle, sunEci, meanLocalTime } from '../js/physics/time.js';
 import {
-  createOrbit, orbitalPeriod, sunSyncInclination, propagate, eciToEcef,
-  ecefToLatLon, latLonToEcef, groundTrack, orbitNumber, subSatellitePoint,
+  createOrbit, orbitalPeriod, sunSyncInclination, propagate,
+  ecefToLatLon, latLonToEcef, groundTrack, orbitNumber, subSatellitePoint, swathTrack,
 } from '../js/physics/orbit.js';
-import { swathWidth, sensorGeometry, horizonHalfAngle } from '../js/physics/sensor.js';
+import {
+  swathWidth, sensorGeometry, horizonHalfAngle, crossTrackGsd, nativeFovDeg,
+} from '../js/physics/sensor.js';
 
 const earth = PLANETS.earth;
 const DEG = Math.PI / 180;
@@ -101,15 +103,15 @@ test('Successive ascending nodes shift west by ≈ 24.7°', () => {
   near(shift, -24.7, 0.3);
 });
 
-test('Descending node local solar time ≈ 10:30', () => {
-  // Find descending node in first orbit: lat crosses 0 going south
-  const half = epoch + (orbit.nodalPeriodS * 1000) / 2;
-  const st = subSatellitePoint(orbit, half);
-  near(st.latDeg, 0, 0.5, 'lat at half orbit');
-  const sunEcef = eciToEcef(sunEci(half).dir, st.theta);
-  const sunLon = Math.atan2(sunEcef[1], sunEcef[0]) / DEG;
-  const lst = ((((st.lonDeg - sunLon) / 15 + 12) % 24) + 24) % 24;
-  near(lst, 10.5, 0.1);
+test('LTDN = 10:30 mean solar time (UTC + lon/15) in every season', () => {
+  // Apparent-sun RAAN would drift by the equation of time (up to ±16 min); mean sun must not.
+  for (const ep of [Date.UTC(2026, 1, 11), Date.UTC(2026, 6, 26), Date.UTC(2026, 9, 2), Date.UTC(2026, 10, 3)]) {
+    const o = createOrbit(earth, { ...DEFAULT_ORBIT, meanAnomalyDeg: 0 }, ep);
+    const tNode = ep + (o.nodalPeriodS * 1000) / 2; // descending node half an orbit later
+    const st = subSatellitePoint(o, tNode);
+    near(st.latDeg, 0, 0.05, 'lat at descending node');
+    near(meanLocalTime(st.lonDeg, tNode), 10.5, 2 / 60, `LTDN at ${new Date(ep).toISOString().slice(0, 10)}`);
+  }
 });
 
 test('lat/lon → ECEF → lat/lon round-trip', () => {
@@ -134,17 +136,34 @@ test('Default orbit starts at descending node (daylight pass)', () => {
 });
 
 // --- Sensor geometry (the relationships the sim is meant to show) ---
-const geo = (alt, s = {}) => sensorGeometry(earth, alt, { ...DEFAULT_SENSOR, ...s });
+const TIR = SENSOR_PRESETS.thermal, VIS = SENSOR_PRESETS.visual;
+const geo = (alt, preset = TIR, fov) => sensorGeometry(earth, alt, preset, fov);
 
 test('Landsat check: 705 km, 15° FOV -> 185 km swath', () => {
   near(swathWidth(earth.radiusKm, 705, 7.5 * DEG), 185.8, 0.5);
 });
 
-test('Default sensor ≈ 10 m GSD, ≈ 23° FOV, ≈ 285 km swath at 700 km', () => {
+test('Thermal preset (TIRS-like) at 700 km: ~100 m GSD, 15.1° FOV, ~186 km swath, f ≈ 175 mm', () => {
   const g = geo(700);
-  near(g.gsdNadirM, 10.0, 0.05, 'GSD');
-  near(g.fovDeg, 22.94, 0.01, 'FOV');
-  near(g.swathKm, 284.8, 0.5, 'swath');
+  near(g.gsdNadirM, 99.75, 0.01, 'GSD');
+  near(g.fovDeg, 15.105, 0.005, 'FOV');
+  near(g.swathKm, 185.8, 0.2, 'swath');
+  near(g.focalLengthMm, 175.4, 0.1, 'focal length');
+});
+
+test('Visual preset (OLI-like) at 700 km: ~30 m GSD, same ~186 km swath', () => {
+  const g = geo(700, VIS);
+  near(g.gsdNadirM, 29.82, 0.01, 'GSD');
+  near(g.swathKm, 186.15, 0.2, 'swath');
+});
+
+test('Wider FOV, same detector array -> wider swath, coarser GSD, shorter focal length', () => {
+  const a = geo(700), b = geo(700, TIR, 30);
+  near(b.pixelsCrossTrack, a.pixelsCrossTrack, 0, 'pixel count fixed');
+  near(b.ifovUrad, 283.03, 0.05, 'IFOV = FOV / N');
+  near(b.gsdNadirM, 198.1, 0.1, 'GSD');
+  near(b.swathKm, 376.7, 0.3, 'swath');
+  if (!(b.focalLengthMm < a.focalLengthMm)) throw new Error('focal length should shrink');
 });
 
 test('Higher altitude -> wider swath and coarser GSD', () => {
@@ -153,16 +172,11 @@ test('Higher altitude -> wider swath and coarser GSD', () => {
   if (!(hi.gsdNadirM > lo.gsdNadirM)) throw new Error('GSD did not grow');
 });
 
-test('Wider FOV (more pixels, same IFOV) -> wider swath, same GSD', () => {
-  const a = geo(700), b = geo(700, { pixelsCrossTrack: DEFAULT_SENSOR.pixelsCrossTrack * 2 });
-  if (!(b.swathKm > a.swathKm)) throw new Error('swath did not grow');
-  near(b.gsdNadirM, a.gsdNadirM, 1e-9, 'GSD');
-});
-
-test('Finer resolution (smaller IFOV, same pixels) -> narrower swath', () => {
-  const a = geo(700), b = geo(700, { ifovUrad: DEFAULT_SENSOR.ifovUrad / 2 });
-  if (!(b.swathKm < a.swathKm)) throw new Error('swath did not shrink');
-  near(b.gsdNadirM, a.gsdNadirM / 2, 1e-9, 'GSD halves');
+test('Edge GSD = nadir GSD at η→0 and grows toward the swath edge', () => {
+  const ifov = 142.5e-6;
+  near(crossTrackGsd(earth.radiusKm, 700, ifov, 1e-9), 700 * 1000 * ifov, 1e-6, 'nadir');
+  near(geo(700).gsdEdgeM, 101.8, 0.1, 'native edge');
+  near(geo(700, TIR, 110).gsdEdgeM, 3492, 2, '110° edge');
 });
 
 test('Spherical swath > flat-earth swath; FOV past horizon -> NaN', () => {
@@ -170,6 +184,19 @@ test('Spherical swath > flat-earth swath; FOV past horizon -> NaN', () => {
   if (!(g.swathKm > g.swathFlatKm)) throw new Error('curvature should widen swath');
   const hz = horizonHalfAngle(earth.radiusKm, 700);
   if (!Number.isNaN(swathWidth(earth.radiusKm, 700, hz + 0.01))) throw new Error('expected NaN');
+  near(nativeFovDeg(TIR), 15.105, 0.005, 'native FOV');
+});
+
+test('Swath edges: left↔right great-circle distance = swath, midpoint = nadir', () => {
+  const swathKm = geo(700, TIR, 30).swathKm;
+  const pts = swathTrack(orbit, epoch, epoch + 3e6, 7, swathKm);
+  const toVec = (p) => latLonToEcef(p.latDeg, p.lonDeg, 1);
+  const angle = (a, b) => Math.acos(Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]));
+  for (const p of pts) {
+    const l = toVec(p.left), r = toVec(p.right), c = toVec(p);
+    near(angle(l, r) * earth.radiusKm, swathKm, 1e-6, 'edge distance');
+    near(angle(l, c), angle(r, c), 1e-9, 'symmetric about nadir');
+  }
 });
 
 // --- Render results ---

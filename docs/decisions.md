@@ -17,15 +17,37 @@ With this mapping a stock `SphereGeometry` + equirectangular texture (lon −180
 **Exception:** `sunEci()` is Earth-specific (Almanac formula). Planet switching needs a per-planet sun model.
 
 ## Sun-synchronous default is computed, not typed (2026-10-02)
-**What:** `inclinationDeg: null` → `sunSyncInclination()` (≈ 98.19° at 700 km). RAAN is set from LTDN 10:30 using the sun's right ascension at epoch, and J2 secular drift (RAAN, arg. of perigee, mean motion) is applied. The sat starts at the descending node (M = 180°) so the first pass is in daylight.
+**What:** `inclinationDeg: null` → `sunSyncInclination()` (≈ 98.19° at 700 km). J2 secular drift (RAAN, arg. of perigee, mean motion) is applied. The sat starts at the descending node (M = 180°) so the first pass is in daylight.
 **Breaks if:** you remove the J2 terms — at high time warp the orbit stops tracking the sun.
 
-## Sensor parameterization: IFOV × pixel count → FOV (2026-10-02)
-**What:** `DEFAULT_SENSOR` stores **IFOV** and **pixelsCrossTrack**. FOV, GSD and swath are always *derived* in `js/physics/sensor.js`:
-`FOV = N·IFOV`, `GSD = h·IFOV`, `swath = 2R·(asin((R+h)/R·sin(FOV/2)) − FOV/2)` (spherical planet).
-**Why:** It encodes the relationships the sim exists to show: higher altitude → wider swath + coarser GSD; wider FOV → wider swath; smaller IFOV with the same detector count → finer GSD *and* narrower swath. These are unit-tested in `tests/orbit.test.js`.
-**Open question:** when a UI slider changes "FOV", do we change N (keep resolution) or IFOV (keep detector)? Decide when building the parameter panel.
-**Breaks if:** someone stores `swathKm` or `fovDeg` directly in config — they'll go stale when altitude changes.
+## LTDN is MEAN solar time (2026-10-02)
+**What:** RAAN = `meanSunRa(epoch)` + (LTAN − 12 h)·15°, with LTAN = LTDN + 12 h. Local time shown in the HUD is `meanLocalTime()` = UTC + lon/15.
+**Why:** SSO planes precess at the *mean* sun rate, and mission LTDN/LTAN values are quoted in mean solar time. The first version used the *apparent* sun, so the node read ~10:20 (UTC + lon/15) in October and drifted ±16 min over the year (equation of time).
+**Breaks if:** someone swaps back to `sunEci().ra`. Test: *"LTDN = 10:30 mean solar time … in every season"*.
+
+## Sensor model: fixed detector array, FOV slider = focal length (2026-10-02)
+**What:** `SENSOR_PRESETS` store the *hardware*: pixel count N, detector pitch p, native IFOV. The FOV slider changes the focal length, so
+`IFOV = FOV/N`, `f = p/IFOV`, `GSD = h·IFOV`, `swath = 2R·(asin((R+h)/R·sin(FOV/2)) − FOV/2)`. All derived in `sensorGeometry()`.
+Presets are Landsat 8/9-like: thermal ≈ TIRS (1850 px, 25 µm, 142.5 µrad → ~100 m), visual ≈ OLI (6200 px, 36 µm, 42.6 µrad → ~30 m). Both give ~186 km swath at native FOV, so switching shows *same swath, different resolution*.
+**Why:** Decided with Jannis: changing FOV must change resolution while the focal-plane array stays the same. Wider FOV → wider swath *and* coarser pixels; pixels always touch (no gaps).
+**Breaks if:** someone stores `swathKm`, `fovDeg` or `gsd` in config, or keeps IFOV fixed while FOV changes (contradiction: FOV = N·IFOV).
+
+## Swath edges use the inertial cross-track axis (2026-10-02)
+**What:** `swathTrack()` / `swathEdgesEci()` place edges at `cos λ·r̂ ± sin λ·n̂` (n̂ = orbit normal), i.e. perpendicular to the orbit plane, which is how a nadir-pointing, non-yaw-steered instrument sees. Earth rotation makes the scan line slightly skewed vs. the ground track — real, not a bug.
+**Breaks if:** edges are computed perpendicular to the *ground track* instead; then yaw steering is implied without being modeled (see backlog).
+
+## Swath rendering details (2026-10-02)
+**What:** Map: past swath is one path of per-segment quads filled once (no alpha seams); antimeridian quads are drawn at ±360°; quads spanning > 90° lon (edge over a pole at huge FOV) are skipped. Globe: swath strip has 8 subdivisions across so wide swaths hug the sphere instead of cutting through it.
+**Breaks if:** you fill each quad separately (visible seams) or drop the cross subdivisions (strip disappears inside the planet for FOV ≳ 40°).
+
+## Pixel close-up is a synthetic sample scene (2026-10-02)
+**What:** `js/ui/pixelInset.js` draws a fixed 3 × 3 km scene (fields, river, town, factory, pond, a cool wet-soil "leak" next to the highway) at 5 m texels, twice: RGB and temperature (gray-encoded). Recorded pixels = box mean via summed-area tables at the current nadir GSD. It is NOT the ground under the satellite.
+**Why:** Shows how GSD changes what can be resolved (e.g. the leak) without needing real imagery. Canvas anti-aliasing in the temperature pass produces realistic mixed pixels.
+**Breaks if:** the two draw passes diverge in geometry (truth RGB and temperature stop lining up).
+
+## View modes (2026-10-02)
+**What:** `Globe.setViewMode('space' | 'earth' | 'satellite')`. Earth mode rotates the camera about scene Y by Δθ (planet rotation since last frame), so OrbitControls dragging still works.
+**Breaks if:** the planet rotation is moved off `planetGroup.rotation.y` without updating the Δθ logic.
 
 ## Spherical planet, geocentric latitude (2026-10-02)
 **What:** Lat/lon are geocentric on a sphere of the equatorial radius. Max error vs. WGS-84 geodetic latitude ≈ 0.19°.
@@ -36,7 +58,7 @@ With this mapping a stock `SphereGeometry` + equirectangular texture (lon −180
 **Why:** Real size would be invisible. Don't "fix" it.
 
 ## Satellite attitude frame (2026-10-02)
-**What:** Model local axes: +X along-track, +Y zenith, +Z cross-track. Instrument slot is on the −Y (nadir) face; wings pivot about Z to track the sun. `satellite.setInstrument(type)` swaps the instrument mesh (pushbroom now, whiskbroom next).
+**What:** Model local axes: +X along-track, +Y zenith, +Z cross-track. Instrument slot is on the −Y (nadir) face; wings pivot about Z to track the sun. `satellite.setInstrument(scan, band)` swaps the instrument mesh (pushbroom visual / thermal now — thermal adds a black cryo-radiator fin + cryocooler; whiskbroom next).
 **Breaks if:** you build new instrument meshes in a different local frame — they'll point the wrong way.
 
 ## One land painter for globe + map (2026-10-02)

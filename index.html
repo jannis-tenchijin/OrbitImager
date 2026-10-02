@@ -37,11 +37,14 @@
       </button>
       <div id="warp" class="segmented" role="group" aria-label="Time warp"></div>
       <button id="now" class="text-btn" title="Jump sim clock to the current real time">Now</button>
-      <label class="toggle" title="Camera follows the satellite">
-        <input type="checkbox" id="follow" />
-        <span class="toggle-track"><span class="toggle-thumb"></span></span>
-        Follow
-      </label>
+      <div class="view-ctl">
+        <span class="ctl-label">View</span>
+        <div id="view" class="segmented" role="group" aria-label="Camera view">
+          <button data-view="space" title="Camera fixed in space — the Earth rotates beneath">Space</button>
+          <button data-view="earth" title="Camera rotates with the Earth — stays over the same country">Earth</button>
+          <button data-view="satellite" title="Camera follows the satellite">Satellite</button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -52,11 +55,21 @@
     </section>
     <div class="side">
       <section class="panel panel-map">
-        <div class="panel-label">Ground track <span class="hint"><i class="sw sw-past"></i>last orbit <i class="sw sw-future"></i>next orbit</span></div>
+        <div class="panel-label">Ground track <span class="hint"><i class="sw sw-swath"></i>recorded swath <i class="sw sw-past"></i>last orbit <i class="sw sw-future"></i>next orbit</span></div>
         <div class="map-host"><canvas id="map"></canvas></div>
         <div id="status" class="status">Loading map data…</div>
       </section>
-      <section id="hud" class="panel hud" aria-live="off"></section>
+      <div class="cards">
+        <section id="sensor-panel" class="panel card sensor-card"></section>
+        <section class="panel card closeup-card">
+          <div class="card-head">
+            <h2 class="card-title">Pixel close-up</h2>
+            <span class="hint">synthetic 3 × 3 km scene at nadir</span>
+          </div>
+          <div id="closeup-host" class="closeup-host"></div>
+        </section>
+      </div>
+      <section id="hud" class="panel card hud" aria-live="off"></section>
     </div>
   </main>
 

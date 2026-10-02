@@ -24,12 +24,14 @@ js/config.js          planets, default orbit/sensor, palette, time warps
 js/main.js            app loop: physics -> globe + map + HUD
 js/physics/time.js    Julian date, planet rotation (GMST), sun direction
 js/physics/orbit.js   Keplerian + J2 propagation, frames, ground track
-js/physics/sensor.js  FOV / GSD / swath geometry
+js/physics/sensor.js  focal-length sensor model: FOV -> IFOV, GSD, swath
 js/geo/land.js        land data loading + shared equirectangular painter
 js/scene/globe.js     Three.js scene (planet, atmosphere, satellite, orbit viz)
 js/scene/satelliteModel.js  satellite mesh + swappable instrument slot
 js/map/map2d.js       2D canvas map + ground track
-js/ui/hud.js          telemetry tiles
+js/ui/hud.js          orbit telemetry tiles (+ shared fmt helpers)
+js/ui/sensorPanel.js  thermal/visual switch, FOV slider, sensor tiles
+js/ui/pixelInset.js   pixel close-up: synthetic scene, truth vs recorded
 tests/                in-browser physics tests
 data/land-50m.json    Natural Earth land (TopoJSON, vendored)
 docs/                 backlog / rejected / decisions
@@ -39,7 +41,8 @@ docs/                 backlog / rejected / decisions
 - Units: km, seconds, radians inside physics. Degrees only at boundaries, named `*Deg`.
 - Physics functions are pure and take a `planet` object — never hard-code Earth constants outside `config.js`.
 - Frames: ECI (Z = north) in physics; `toScene()` in `globe.js` maps to Three.js Y-up. Read `docs/decisions.md` before touching frames.
-- Derived sensor values (FOV, GSD, swath) are computed in `sensor.js`, never stored in config.
+- Sensor presets store hardware only (pixels, pitch, native IFOV). FOV slider = focal length; IFOV, GSD, swath are derived in `sensor.js`, never stored.
+- Local times / LTDN are MEAN solar time (UTC + lon/15). Never use the apparent sun for RAAN.
 - Colors live in `PALETTE` (`config.js`) or CSS `:root` vars — no stray hex values in new code.
 - Comments: brief, explain the *why* / the math. Match the existing density.
 - New physics => add a test in `tests/orbit.test.js` with a known reference value.

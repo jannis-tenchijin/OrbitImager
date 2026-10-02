@@ -29,7 +29,22 @@ Rotate the globe to Japan. Magenta dot must sit on Tokyo in both views.
 ## 5. Wrap / warp check
 - Click `1000×`, wait ~8 s. Orbit # increments; map track has no horizontal streaks at ±180°; successive passes shift west.
 
-## 6. Mobile layout
+## 6. Sensor + swath checks
+Run in the page and compare with the expected values:
+```js
+const sl = document.getElementById('fov-slider'); sl.value = 30; sl.dispatchEvent(new Event('input'));
+JSON.stringify({ swath: __app.geom.swathKm, gsd: __app.geom.gsdNadirM, f: __app.geom.focalLengthMm });
+```
+- Thermal @ 30°: swath ≈ 377 km, GSD ≈ 198 m, focal ≈ 88 mm. Swath band on map + globe visibly wider; close-up pixels bigger.
+- Click **Visual**: FOV resets to ~15.1°, GSD ≈ 29.8 m, swath ≈ 186 km, swath color turns teal.
+- FOV 110° + `1000×`: no streaks at ±180° or near the poles on the map.
+
+## 7. View modes
+- **Earth** + `300×`: the point under the camera stays fixed (Japan stays centered) while the orbit sweeps.
+- **Space**: the Earth rotates beneath (~15°/h sim time). **Satellite**: camera tracks the satellite.
+- HUD: Local time ≈ 10:30 at the descending (daylight) equator crossing; LTDN tile = 10:30.
+
+## 8. Mobile layout
 - `resize_window` preset `mobile`, reload. Panels stack; `document.documentElement.scrollWidth === clientWidth` (no horizontal scroll).
 - Reset with preset `desktop` afterward.
 

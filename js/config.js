@@ -17,23 +17,46 @@ export const PLANETS = {
 
 export const DEFAULT_PLANET = 'earth';
 
-// Sun-synchronous, Sentinel-2-like. inclinationDeg: null => computed for SSO.
+// Sun-synchronous. inclinationDeg: null => computed for SSO.
 export const DEFAULT_ORBIT = {
   altitudeKm: 700,
   eccentricity: 0,
   inclinationDeg: null,
-  ltdnHours: 10.5,       // local time of descending node (sets RAAN at epoch)
+  ltdnHours: 10.5,       // local MEAN solar time of descending node, 10:30 (sets RAAN at epoch)
   argPerigeeDeg: 0,
   meanAnomalyDeg: 180,   // start at the descending node => daylight imaging pass at 10:30
 };
 
-// Line-scanner sensor. FOV, GSD and swath are DERIVED (js/physics/sensor.js), never stored.
-// ~10 m GSD and ~285 km swath at 700 km (Sentinel-2-like).
-export const DEFAULT_SENSOR = {
-  type: 'pushbroom',       // 'pushbroom' | 'whiskbroom' (whiskbroom model is backlog)
-  ifovUrad: 14.3,          // angular size of one pixel, microradians
-  pixelsCrossTrack: 28000, // detector elements (pushbroom) or samples per scan (whiskbroom)
+// Line-scanner sensor presets. The detector array (pixel count + pitch) is FIXED; the FOV
+// slider changes focal length, so IFOV = FOV / pixels. FOV, IFOV, GSD and swath are DERIVED in
+// js/physics/sensor.js and never stored. Native values give ~186 km swath at 700 km for both.
+export const SENSOR_PRESETS = {
+  thermal: {
+    id: 'thermal',
+    label: 'Thermal (LST)',
+    band: 'TIR 10.6–12.5 µm',
+    scan: 'pushbroom',        // 'pushbroom' | 'whiskbroom' (whiskbroom model is backlog)
+    pixelsCrossTrack: 1850,   // detector elements across track
+    detectorPitchUm: 25,      // physical detector size
+    nativeIfovUrad: 142.5,    // IFOV at the native focal length (~100 m GSD at 700 km)
+    inspiredBy: 'Landsat 8/9 TIRS',
+  },
+  visual: {
+    id: 'visual',
+    label: 'Visual',
+    band: 'VNIR 0.43–0.88 µm',
+    scan: 'pushbroom',
+    pixelsCrossTrack: 6200,
+    detectorPitchUm: 36,
+    nativeIfovUrad: 42.6,     // ~30 m GSD at 700 km
+    inspiredBy: 'Landsat 8/9 OLI',
+  },
 };
+export const DEFAULT_SENSOR_ID = 'thermal';
+export const FOV_RANGE_DEG = [2, 110]; // horizon limit at 700 km is ~128 deg
+
+// Pixel close-up sample scene: fixed ground window and texel size
+export const CLOSEUP = { sizeM: 3000, texelM: 5, tempRangeC: [15, 45] };
 
 // Scene scale: 1 Three.js unit = 1000 km.
 export const SCENE_KM_PER_UNIT = 1000;
@@ -80,4 +103,10 @@ export const PALETTE = {
   nadir: '#ffd166',
   satelliteIcon: '#ffd166',
   atmosphere: [0.45, 0.75, 1.0],
+  swath: { thermal: '#ff9f43', visual: '#3fd8c2' },
+  // LST colormap (cool -> hot) for the thermal close-up: [t in 0..1, color]
+  thermalRamp: [
+    [0, '#2c3e9e'], [0.25, '#2fa7d8'], [0.5, '#8fd16b'],
+    [0.7, '#f6d544'], [0.85, '#f2843a'], [1, '#d93a2b'],
+  ],
 };

@@ -1,7 +1,7 @@
 // Orbit propagation: Keplerian elements + J2 secular drift, frame conversions, ground track.
 // Frames: ECI (inertial, Z = north pole) and planet-fixed (ECEF-like). Units: km, s, rad.
 
-import { rotationAngle, sunEci, wrapTwoPi } from './time.js';
+import { rotationAngle, meanSunRa, wrapTwoPi } from './time.js';
 
 const DEG = Math.PI / 180;
 
@@ -20,14 +20,14 @@ export function sunSyncInclination(planet, altitudeKm, e = 0) {
   return Math.abs(cosI) <= 1 ? Math.acos(cosI) / DEG : NaN;
 }
 
-/** RAAN (rad) that places the ascending node at local solar time ltanHours. */
+/** RAAN (rad) that places the ascending node at local MEAN solar time ltanHours. */
 export function raanFromLtan(sunRa, ltanHours) {
   return wrapTwoPi(sunRa + (ltanHours - 12) * 15 * DEG);
 }
 
 /**
  * Build an orbit object from config-style elements at epochMs.
- * Resolves SSO inclination (inclinationDeg: null) and RAAN from LTDN.
+ * Resolves SSO inclination (inclinationDeg: null) and RAAN from LTDN (mean sun).
  */
 export function createOrbit(planet, cfg, epochMs) {
   const a = planet.radiusKm + cfg.altitudeKm;
@@ -35,7 +35,7 @@ export function createOrbit(planet, cfg, epochMs) {
   const incDeg = cfg.inclinationDeg ?? sunSyncInclination(planet, cfg.altitudeKm, e);
   const i = incDeg * DEG;
   const ltanHours = (cfg.ltdnHours + 12) % 24; // ascending node is 12 h opposite descending
-  const raan0 = cfg.raanDeg != null ? cfg.raanDeg * DEG : raanFromLtan(sunEci(epochMs).ra, ltanHours);
+  const raan0 = cfg.raanDeg != null ? cfg.raanDeg * DEG : raanFromLtan(meanSunRa(epochMs), ltanHours);
 
   // Secular J2 rates (Vallado eqs.): node regression, apsidal rotation, mean-motion correction
   const n = Math.sqrt(planet.mu / a ** 3);
@@ -147,6 +147,53 @@ export function groundTrack(orbit, t0Ms, t1Ms, samples) {
     out[k] = { tMs: t, latDeg: g.latDeg, lonDeg: g.lonDeg };
   }
   return out;
+}
+
+/**
+ * Swath edges along the track. The scan line is perpendicular to the orbit plane (the
+ * instrument's cross-track axis = orbit normal), so edge directions are
+ * p± = cos(λ)·r̂ ± sin(λ)·n̂, with λ = swath / (2R) the Earth-central half-angle.
+ * Returns [{tMs, latDeg, lonDeg, left:{latDeg, lonDeg}, right:{latDeg, lonDeg}}].
+ * "left" is on the +n̂ side (left of travel for a prograde view from above).
+ */
+export function swathTrack(orbit, t0Ms, t1Ms, samples, swathKm) {
+  const R = orbit.planet.radiusKm;
+  const lam = Number.isFinite(swathKm) ? swathKm / (2 * R) : 0;
+  const cl = Math.cos(lam), sl = Math.sin(lam);
+  const out = new Array(samples);
+  for (let k = 0; k < samples; k++) {
+    const t = t0Ms + ((t1Ms - t0Ms) * k) / (samples - 1);
+    const st = propagate(orbit, t);
+    const { left, right, center } = swathEdgesEci(st.pos, st.vel, cl, sl);
+    const g = ecefToLatLon(eciToEcef(center, st.theta), 1);
+    const gl = ecefToLatLon(eciToEcef(left, st.theta), 1);
+    const gr = ecefToLatLon(eciToEcef(right, st.theta), 1);
+    out[k] = {
+      tMs: t, latDeg: g.latDeg, lonDeg: g.lonDeg,
+      left: { latDeg: gl.latDeg, lonDeg: gl.lonDeg },
+      right: { latDeg: gr.latDeg, lonDeg: gr.lonDeg },
+    };
+  }
+  return out;
+}
+
+/** Unit vectors (ECI) of nadir and the two swath edges for one state vector. */
+export function swathEdgesEci(pos, vel, cosLam, sinLam) {
+  const r = Math.hypot(...pos);
+  const u = pos.map((x) => x / r);
+  // Orbit normal n = r x v (normalized)
+  const n = [
+    pos[1] * vel[2] - pos[2] * vel[1],
+    pos[2] * vel[0] - pos[0] * vel[2],
+    pos[0] * vel[1] - pos[1] * vel[0],
+  ];
+  const nl = Math.hypot(...n);
+  const nh = n.map((x) => x / nl);
+  return {
+    center: u,
+    left: [0, 1, 2].map((k) => cosLam * u[k] + sinLam * nh[k]),
+    right: [0, 1, 2].map((k) => cosLam * u[k] - sinLam * nh[k]),
+  };
 }
 
 /** Closed orbit ellipse in ECI with elements frozen at tMs (for drawing the orbit line). */

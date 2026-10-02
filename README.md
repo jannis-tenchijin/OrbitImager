@@ -5,8 +5,10 @@ The goal is to make the imaging geometry visible: how altitude, field of view an
 change swath width and ground resolution, and how pushbroom vs whiskbroom sensors differ in
 *when* each pixel is recorded.
 
-**v0:** 3D globe with a sun-synchronous satellite (700 km, ~98.2°, 10:30 descending node), a 2D map
-with the ground track, time warp, follow camera, and live orbit + sensor telemetry (FOV, GSD, swath).
+**Current:** 3D globe with a sun-synchronous satellite (700 km, ~98.2°, LTDN 10:30 mean solar time),
+2D ground-track map with the recorded swath, thermal (Landsat TIRS-like) and visual (OLI-like) sensor presets,
+an FOV slider (fixed detector array → focal length changes), live FOV/IFOV/GSD/swath, and a pixel close-up
+comparing ground truth with what the sensor records.
 
 ## Run locally
 ```bash
@@ -18,7 +20,8 @@ Open http://localhost:8000/ — physics tests at http://localhost:8000/tests/.
 ## Controls
 - Drag / scroll on the globe to rotate / zoom
 - Space or ⏸ to pause, time-warp buttons for speed, **Now** to jump to real time
-- **Follow** keeps the camera above the satellite
+- **View:** *Space* (Earth rotates beneath), *Earth* (camera rotates with Earth — stay over one country), *Satellite* (follow)
+- **Sensor:** switch Thermal (LST) / Visual, drag **FOV**, ↺ resets to the native optics
 
 ## Project docs
 - [docs/backlog.md](docs/backlog.md) — what's next

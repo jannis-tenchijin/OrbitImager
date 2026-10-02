@@ -88,7 +88,11 @@ export class Map2D {
     return runs;
   }
 
-  render({ sub, past, future, nowMs }) {
+  /**
+   * past/future: swathTrack() samples ({latDeg, lonDeg, tMs, left, right}).
+   * swathColor: CSS color of the active sensor's swath.
+   */
+  render({ sub, past, future, nowMs, swathColor }) {
     const ctx = this.ctx;
     const { x, y, w, h } = this.rect;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -108,6 +112,23 @@ export class Map2D {
     ctx.drawImage(this.layer, x, y, w, h);
 
     this.drawAxisLabels(ctx);
+
+    // Swath: recorded (past) = filled band, upcoming = thin edge lines
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.fillStyle = withAlpha(swathColor, 0.34);
+    this.fillSwath(ctx, past);
+    ctx.strokeStyle = withAlpha(swathColor, 0.75);
+    ctx.lineWidth = 1;
+    for (const side of ['left', 'right']) {
+      for (const run of this.splitTrack(past.map((p) => ({ ...p[side], tMs: p.tMs })))) this.strokeRun(ctx, run);
+    }
+    ctx.strokeStyle = withAlpha(swathColor, 0.45);
+    ctx.setLineDash([2, 4]);
+    for (const side of ['left', 'right']) {
+      for (const run of this.splitTrack(future.map((p) => ({ ...p[side], tMs: p.tMs })))) this.strokeRun(ctx, run);
+    }
+    ctx.setLineDash([]);
     this.drawMarkers(ctx);
 
     // Future track: dashed white
@@ -137,8 +158,55 @@ export class Map2D {
     }
     ctx.globalAlpha = 1;
 
+    // Current scan line (what the detector array sees right now)
+    const now = past[past.length - 1];
+    this.drawScanLine(ctx, now, swathColor);
+
     this.drawSatellite(ctx, sub, future[1] ?? sub, nowMs);
     ctx.restore();
+  }
+
+  /**
+   * Fill the swath as one path of per-segment quads (a single fill avoids alpha seams).
+   * Quads crossing the antimeridian are unwrapped and also drawn shifted by ±360°;
+   * quads spanning > 90° of longitude (edge passing over a pole at huge FOV) are skipped.
+   */
+  fillSwath(ctx, track) {
+    const { w } = this.rect;
+    ctx.beginPath();
+    for (let i = 1; i < track.length; i++) {
+      const quad = [track[i - 1].left, track[i].left, track[i].right, track[i - 1].right];
+      const lon0 = quad[0].lonDeg;
+      const lons = quad.map((q) => q.lonDeg + 360 * Math.round((lon0 - q.lonDeg) / 360));
+      const min = Math.min(...lons), max = Math.max(...lons);
+      if (max - min > 90) continue;
+      const pts = quad.map((q, k) => this.toPx(q.latDeg, lons[k]));
+      const offsets = [0];
+      if (min < -180) offsets.push(w);
+      if (max > 180) offsets.push(-w);
+      for (const dx of offsets) {
+        ctx.moveTo(pts[0][0] + dx, pts[0][1]);
+        for (let k = 1; k < 4; k++) ctx.lineTo(pts[k][0] + dx, pts[k][1]);
+        ctx.closePath();
+      }
+    }
+    ctx.fill();
+  }
+
+  drawScanLine(ctx, p, color) {
+    if (!p) return;
+    const [ax, ay] = this.toPx(p.left.latDeg, p.left.lonDeg);
+    const [bx, by] = this.toPx(p.right.latDeg, p.right.lonDeg);
+    if (Math.abs(bx - ax) > this.rect.w / 2) return; // straddles ±180°: skip this frame
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
   }
 
   strokeRun(ctx, run) {
@@ -220,6 +288,12 @@ export class Map2D {
     ctx.strokeRect(-4.5, -4.5, 9, 9);
     ctx.restore();
   }
+}
+
+/** '#rrggbb' -> 'rgba(r,g,b,a)' */
+function withAlpha(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
 }
 
 function roundRect(ctx, x, y, w, h, r) {

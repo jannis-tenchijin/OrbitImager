@@ -54,11 +54,18 @@ const MAT = {
   panelBack: new THREE.MeshStandardMaterial({ color: 0xdfe3ea, metalness: 0.2, roughness: 0.7 }),
 };
 
-/** Pushbroom imager: white telescope housing with a long cross-track detector slit. */
-function buildPushbroom() {
+/** Slit glow per band: visual = blue, thermal = warm orange. */
+const SLIT_GLOW = { visual: 0x3aa0ff, thermal: 0xff7a2a };
+
+/**
+ * Pushbroom imager: telescope housing with a long cross-track detector slit.
+ * Thermal variant adds what makes TIR instruments recognizable: a black cryo-radiator
+ * fin (detectors must be cold) and a cryocooler cylinder.
+ */
+function buildPushbroom(band = 'visual') {
   const g = new THREE.Group();
-  g.name = 'instrument:pushbroom';
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.55, 0.8), MAT.white);
+  g.name = `instrument:pushbroom:${band}`;
+  const housing = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.55, 0.8), band === 'thermal' ? MAT.silver : MAT.white);
   housing.position.y = -0.27;
   g.add(housing);
   // Baffle hood around the aperture
@@ -70,10 +77,26 @@ function buildPushbroom() {
   // Detector line: long and thin across track => the pushbroom "signature"
   const slit = new THREE.Mesh(
     new THREE.BoxGeometry(0.08, 0.02, 0.62),
-    new THREE.MeshStandardMaterial({ color: 0x0a1030, emissive: 0x3aa0ff, emissiveIntensity: 1.6 })
+    new THREE.MeshStandardMaterial({ color: 0x0a1030, emissive: SLIT_GLOW[band] ?? SLIT_GLOW.visual, emissiveIntensity: 1.6 })
   );
   slit.position.y = -0.56;
   g.add(slit);
+
+  if (band === 'thermal') {
+    // Cryo-radiator: black fin on the side facing away from sun/planet
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.04, 0.55), MAT.dark);
+    fin.position.set(0, -0.2, 0.68);
+    fin.rotation.x = -0.35;
+    g.add(fin);
+    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.04, 0.3), MAT.silver);
+    strut.position.set(0, -0.25, 0.48);
+    g.add(strut);
+    // Cryocooler cylinder on the aft side of the housing
+    const cooler = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.38, 10), MAT.gold);
+    cooler.rotation.z = Math.PI / 2;
+    cooler.position.set(-0.55, -0.3, -0.2);
+    g.add(cooler);
+  }
   return g;
 }
 
@@ -99,7 +122,7 @@ function buildWing(side, cellTex) {
   return wing;
 }
 
-export function createSatelliteModel({ instrument = 'pushbroom', scale = 1 } = {}) {
+export function createSatelliteModel({ instrument = 'pushbroom', band = 'visual', scale = 1 } = {}) {
   const root = new THREE.Group();
   root.name = 'satellite';
   const body = new THREE.Group(); // scaled model content
@@ -169,10 +192,10 @@ export function createSatelliteModel({ instrument = 'pushbroom', scale = 1 } = {
   const api = {
     object: root,
     wings,
-    /** Replace the instrument model. Unknown types fall back to pushbroom. */
-    setInstrument(type) {
+    /** Replace the instrument model (scan type + band). Unknown types fall back to pushbroom. */
+    setInstrument(type, bandId = 'visual') {
       slot.clear();
-      const inst = (INSTRUMENTS[type] ?? INSTRUMENTS.pushbroom)();
+      const inst = (INSTRUMENTS[type] ?? INSTRUMENTS.pushbroom)(bandId);
       if (api.envMap) {
         inst.traverse((o) => {
           if (o.material?.isMeshStandardMaterial) o.material.envMap = api.envMap;
@@ -186,6 +209,6 @@ export function createSatelliteModel({ instrument = 'pushbroom', scale = 1 } = {
       for (const w of wings) w.rotation.z = angle;
     },
   };
-  api.setInstrument(instrument);
+  api.setInstrument(instrument, band);
   return api;
 }
