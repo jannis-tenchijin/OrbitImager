@@ -139,7 +139,66 @@ function buildWhiskbroom(band = 'visual') {
   return g;
 }
 
-const INSTRUMENTS = { pushbroom: buildPushbroom, whiskbroom: buildWhiskbroom };
+/** Framing (staring) camera: big telescope with a square aperture and a 2-D detector glow. */
+function buildFraming(band = 'thermal') {
+  const g = new THREE.Group();
+  g.name = `instrument:framing:${band}`;
+  const tube = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.75, 0.7), band === 'thermal' ? MAT.silver : MAT.white);
+  tube.position.y = -0.37;
+  g.add(tube);
+  const hoodMat = MAT.dark.clone();
+  hoodMat.side = THREE.DoubleSide;
+  const hood = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.36, 0.3, 4, 1, true), hoodMat);
+  hood.rotation.y = Math.PI / 4; // square aperture
+  hood.position.y = -0.88;
+  g.add(hood);
+  const frame = new THREE.Mesh(
+    new THREE.BoxGeometry(0.4, 0.02, 0.4), // square 2-D array => framing "signature"
+    new THREE.MeshStandardMaterial({ color: 0x0a1030, emissive: SLIT_GLOW[band] ?? SLIT_GLOW.visual, emissiveIntensity: 1.4 })
+  );
+  frame.position.y = -0.76;
+  g.add(frame);
+  if (band === 'thermal') addThermalExtras(g);
+  return g;
+}
+
+/**
+ * SAR: long flat phased-array antenna along-track, tilted to look sideways (right = +Z in the
+ * model frame), with a grid of radiating elements. No optics.
+ */
+function buildSar(band = 'sar', lookSide = 'right') {
+  const g = new THREE.Group();
+  g.name = 'instrument:sar';
+  const side = lookSide === 'left' ? -1 : 1;
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 64;
+  const x = c.getContext('2d');
+  x.fillStyle = '#d8dde6';
+  x.fillRect(0, 0, 256, 64);
+  x.fillStyle = '#5c6474';
+  for (let i = 0; i < 32; i++) for (let j = 0; j < 6; j++) x.fillRect(4 + i * 8, 4 + j * 10, 5, 6);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const faceMat = new THREE.MeshStandardMaterial({ map: tex, metalness: 0.3, roughness: 0.5 });
+  const mats = [MAT.silver, MAT.silver, MAT.panelBack, faceMat, MAT.silver, MAT.silver];
+  const antenna = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.07, 0.75), mats); // -Y face radiates
+  const mount = new THREE.Group();
+  mount.add(antenna);
+  mount.position.set(0, -0.15, side * 0.62);
+  mount.rotation.x = -side * 0.62; // tilt the radiating (-Y) face down toward the look side (~35°)
+  g.add(mount);
+  const strut = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.4), MAT.silver);
+  strut.position.set(0, -0.1, side * 0.35);
+  g.add(strut);
+  g.userData.animate = ({ pulse }) => {
+    faceMat.emissive = faceMat.emissive || new THREE.Color();
+    faceMat.emissive.setRGB(0.25 * pulse, 0.45 * pulse, 0.9 * pulse);
+  };
+  return g;
+}
+
+const INSTRUMENTS = { pushbroom: buildPushbroom, whiskbroom: buildWhiskbroom, framing: buildFraming, sar: buildSar };
 
 /** One solar wing: yoke + three hinged panels extending along +Z (mirrored for -Z). */
 function buildWing(side, cellTex) {
@@ -232,9 +291,9 @@ export function createSatelliteModel({ instrument = 'pushbroom', band = 'visual'
     object: root,
     wings,
     /** Replace the instrument model (scan type + band). Unknown types fall back to pushbroom. */
-    setInstrument(type, bandId = 'visual') {
+    setInstrument(type, bandId = 'visual', opts = {}) {
       slot.clear();
-      const inst = (INSTRUMENTS[type] ?? INSTRUMENTS.pushbroom)(bandId);
+      const inst = (INSTRUMENTS[type] ?? INSTRUMENTS.pushbroom)(bandId, opts.lookSide);
       if (api.envMap) {
         inst.traverse((o) => {
           if (o.material?.isMeshStandardMaterial) o.material.envMap = api.envMap;

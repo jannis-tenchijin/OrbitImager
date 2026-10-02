@@ -1,4 +1,5 @@
-// Orbit telemetry tiles. Text updates are throttled to avoid layout churn every frame.
+// Orbit card: altitude slider (what-if orbits) + telemetry tiles.
+// Tile text updates are throttled to avoid layout churn every frame.
 
 const FIELDS = [
   ['utc', 'UTC time', 'wide'],
@@ -13,9 +14,29 @@ const FIELDS = [
   ['inc', 'Inclination'],
 ];
 
-export function createHud(container) {
-  container.innerHTML = '<h2 class="card-title">Orbit</h2><div class="hud-grid"></div>';
+/**
+ * altRange: [min, max] km. onAltitude(km) fires while dragging; onResetAltitude() restores the
+ * preset altitude.
+ */
+export function createHud(container, { altRange, onAltitude, onResetAltitude }) {
+  container.innerHTML = `
+    <div class="card-head"><h2 class="card-title">Orbit</h2><span class="hint">sun-synchronous · inclination auto</span></div>
+    <div class="slider-row">
+      <label for="alt-slider">Altitude</label>
+      <input id="alt-slider" type="range" min="${altRange[0]}" max="${altRange[1]}" step="5" />
+      <output for="alt-slider" class="slider-value">–</output>
+      <button class="icon-btn small" title="Back to the satellite's real altitude" aria-label="Reset altitude">↺</button>
+    </div>
+    <div class="slider-note">Higher orbit → slower, longer period, wider swath; optical GSD coarsens, SAR resolution doesn't</div>
+    <div class="hud-grid"></div>`;
   const grid = container.querySelector('.hud-grid');
+  const alt = container.querySelector('#alt-slider');
+  const altOut = container.querySelector('.slider-value');
+  alt.addEventListener('input', () => {
+    altOut.textContent = `${alt.value} km`;
+    onAltitude(Number(alt.value));
+  });
+  container.querySelector('button[aria-label="Reset altitude"]').addEventListener('click', onResetAltitude);
   const els = {};
   for (const [key, label, cls] of FIELDS) {
     const tile = document.createElement('div');
@@ -27,6 +48,11 @@ export function createHud(container) {
 
   let last = 0;
   return {
+    /** Reflect the current altitude on the slider (e.g. after a preset change). */
+    setAltitude(km) {
+      alt.value = km;
+      altOut.textContent = `${Math.round(km)} km`;
+    },
     /** values: { key: displayString } for any keys in FIELDS */
     update(values, force = false) {
       const now = performance.now();
@@ -41,7 +67,7 @@ export const fmt = {
   utc: (ms) => new Date(ms).toISOString().replace('T', '  ').slice(0, 20),
   lat: (d) => `${Math.abs(d).toFixed(2)}° ${d >= 0 ? 'N' : 'S'}`,
   lon: (d) => `${Math.abs(d).toFixed(2)}° ${d >= 0 ? 'E' : 'W'}`,
-  km: (x) => (Number.isFinite(x) ? `${x.toFixed(0)} km` : 'past horizon'),
+  km: (x) => (Number.isFinite(x) ? `${x.toFixed(x < 100 ? 1 : 0)} km` : 'past horizon'),
   kms: (x) => `${x.toFixed(2)} km/s`,
   m: (x) => (x >= 1000 ? `${(x / 1000).toFixed(2)} km` : `${x.toFixed(1)} m`),
   min: (s) => `${(s / 60).toFixed(1)} min`,

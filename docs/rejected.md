@@ -27,3 +27,12 @@ Things we considered and dropped. Format: `## Title (YYYY-MM-DD)` + **Why reject
 
 ## Recomputing the past swath every frame (2026-10-02)
 **Why rejected:** Can't represent what was seen at acquisition time (moving clouds, FOV changes). Replaced by the swath recorder.
+
+## Zoomable pixel close-up (2026-10-02)
+**Why rejected:** Jannis cancelled it — keep the close-up simple: a fixed 3 × 3 km scene, one orbital pass, no neighboring-pass data.
+
+## Separate day/night colors for thermal swaths (2026-10-02)
+**Why rejected:** Jannis: one color for LST day and night. Night is still stored as `NIGHT` status (could be re-enabled as an option). Visual keeps "night: no data".
+
+## Auto-ending the recording after one ground-track cycle (2026-10-02)
+**Why rejected:** Superseded — recording now runs until Stop so multi-day revisit/coverage can be studied.

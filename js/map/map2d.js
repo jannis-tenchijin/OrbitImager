@@ -110,7 +110,7 @@ export class Map2D {
         for (let k = 1; k < 4; k++) lon[k] += 360 * Math.round((lon[0] - lon[k]) / 360);
         const min = Math.min(...lon), max = Math.max(...lon);
         if (max - min > 90) continue;
-        const key = st === STATUS.CLOUD ? 'cloud' : `${b.sensorId}:${st}`;
+        const key = st === STATUS.CLOUD ? 'cloud' : b.kind; // day and night share one color
         let path = paths.get(key);
         if (!path) paths.set(key, (path = new Path2D()));
         const pts = lat.map((la, k) => this.toLocal(la, lon[k]));
@@ -127,12 +127,7 @@ export class Map2D {
     ctx.lineWidth = 0.8;
     ctx.lineJoin = 'round';
     for (const [key, path] of paths) {
-      let style;
-      if (key === 'cloud') style = this.hatchPattern(ctx);
-      else {
-        const [sensorId, st] = key.split(':');
-        style = Number(st) === STATUS.NIGHT ? this.palette.swathNight : this.palette.swath[sensorId];
-      }
+      const style = key === 'cloud' ? this.hatchPattern(ctx) : this.palette.swath[key];
       ctx.fillStyle = style;
       ctx.strokeStyle = style; // thin same-color stroke hides anti-aliasing seams between batches
       ctx.fill(path);

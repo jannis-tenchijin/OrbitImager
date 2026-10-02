@@ -48,10 +48,31 @@ export function createOrbit(planet, cfg, epochMs) {
 
   return {
     planet, epochMs, a, e, i,
+    altitudeKm: cfg.altitudeKm, ltdnHours: cfg.ltdnHours,
     raan0, argp0: cfg.argPerigeeDeg * DEG, m0: cfg.meanAnomalyDeg * DEG,
     n, raanDot, argpDot, mDot,
     nodalPeriodS: (2 * Math.PI) / (mDot + argpDot), // ascending node to ascending node
   };
+}
+
+/**
+ * New circular SSO orbit at tMs that continues smoothly from `orbit`: same argument of
+ * latitude (the satellite doesn't jump along its path), same orbit plane (RAAN) unless the
+ * LTDN changes, SSO inclination recomputed for the new altitude. Period, speed and J2 rates
+ * follow from the new altitude automatically.
+ */
+export function retargetOrbit(orbit, tMs, { altitudeKm, ltdnHours }) {
+  const el = elementsAt(orbit, tMs);
+  const samePlane = ltdnHours === orbit.ltdnHours;
+  return createOrbit(orbit.planet, {
+    altitudeKm,
+    eccentricity: 0,
+    inclinationDeg: null,
+    ltdnHours,
+    argPerigeeDeg: 0,
+    meanAnomalyDeg: wrapTwoPi(el.argp + el.M) / DEG,
+    raanDeg: samePlane ? wrapTwoPi(el.raan) / DEG : null,
+  }, tMs);
 }
 
 /** Solve Kepler's equation M = E - e sin E (Newton iteration). */
@@ -150,21 +171,43 @@ export function groundTrack(orbit, t0Ms, t1Ms, samples) {
 }
 
 /**
+ * Normalize a swath spec to signed Earth-central edge angles (rad, + = left of track).
+ * A number is a symmetric swath width in km (optical, nadir-centered); an object
+ * { left, right } is used as-is (e.g. side-looking SAR: both edges on one side).
+ */
+export function swathEdges(swath, radiusKm) {
+  if (typeof swath === 'object' && swath) return swath;
+  const lam = Number.isFinite(swath) ? swath / (2 * radiusKm) : 0;
+  return { left: lam, right: -lam };
+}
+
+/** Unit ECI vector at signed central angle lam across track: cos(lam)·r̂ + sin(lam)·n̂. */
+export function crossTrackPointEci(pos, vel, lam) {
+  const r = Math.hypot(...pos);
+  const n = [pos[1] * vel[2] - pos[2] * vel[1], pos[2] * vel[0] - pos[0] * vel[2], pos[0] * vel[1] - pos[1] * vel[0]];
+  const nl = Math.hypot(...n);
+  const c = Math.cos(lam), s = Math.sin(lam);
+  return [0, 1, 2].map((k) => (c * pos[k]) / r + (s * n[k]) / nl);
+}
+
+/**
  * Swath edges along the track. The scan line is perpendicular to the orbit plane (the
  * instrument's cross-track axis = orbit normal), so edge directions are
- * p± = cos(λ)·r̂ ± sin(λ)·n̂, with λ = swath / (2R) the Earth-central half-angle.
+ * p = cos(λ)·r̂ + sin(λ)·n̂ for the signed edge angles λ (see swathEdges).
  * Returns [{tMs, latDeg, lonDeg, left:{latDeg, lonDeg}, right:{latDeg, lonDeg}}].
- * "left" is on the +n̂ side (left of travel for a prograde view from above).
+ * "left" is on the +n̂ side (left of travel).
  */
-export function swathTrack(orbit, t0Ms, t1Ms, samples, swathKm) {
+export function swathTrack(orbit, t0Ms, t1Ms, samples, swath) {
   const R = orbit.planet.radiusKm;
-  const lam = Number.isFinite(swathKm) ? swathKm / (2 * R) : 0;
-  const cl = Math.cos(lam), sl = Math.sin(lam);
+  const edges = swathEdges(swath, R);
   const out = new Array(samples);
   for (let k = 0; k < samples; k++) {
     const t = t0Ms + ((t1Ms - t0Ms) * k) / (samples - 1);
     const st = propagate(orbit, t);
-    const { left, right, center } = swathEdgesEci(st.pos, st.vel, cl, sl);
+    const r = Math.hypot(...st.pos);
+    const center = st.pos.map((x) => x / r);
+    const left = crossTrackPointEci(st.pos, st.vel, edges.left);
+    const right = crossTrackPointEci(st.pos, st.vel, edges.right);
     const g = ecefToLatLon(eciToEcef(center, st.theta), 1);
     const gl = ecefToLatLon(eciToEcef(left, st.theta), 1);
     const gr = ecefToLatLon(eciToEcef(right, st.theta), 1);

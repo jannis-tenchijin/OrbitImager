@@ -44,12 +44,12 @@ JSON.stringify({ swath: __app.geom.swathKm, gsd: __app.geom.gsdNadirM, f: __app.
 - **Space**: the Earth rotates beneath (~15°/h sim time). **Satellite**: camera tracks the satellite.
 - HUD: Local time ≈ 10:30 at the descending (daylight) equator crossing; LTDN tile = 10:30.
 
-## 8. Record, clouds, day/night, whiskbroom
-- Click **Record** at `5000×`: status shows `REC n/15`; stripes accumulate on map + globe; after ~20 s it shows `Done · 15 orbits · usable ~18% · cloudy ~8%` with **Record again / Clear**.
-- Thermal: day stripes orange, night stripes purple. Visual: night passes have no swath (legend says "night: no data").
-- Cloud-masked cells: dark slate hatch on the map / dark patches on the globe.
-- Whiskbroom: tiles show Rows/sweep, Scan period, Earth view %, Mirror rpm; 3D shows a sweeping beam; close-up fills k rows per sweep with a "calibrating" pause; FOV slider max 110° (pushbroom clamps to 40°).
-- Rapid-click Record/Stop/Now: `__app.recorder.mode` must toggle recording ↔ live correctly.
+## 8. Presets, SAR, altitude, recording
+- Loop all presets via `__app.panel.select(satId, instId)` (ids in `__app.catalog`): no console errors; tiles match published values (e.g. Landsat TIRS 185 km / 100 m / ~176 mm, SGLI-IRS 1400 km / 250 m / whisk 20 rows, S1 IW 250 km incidence ~29–45°).
+- SAR: swath offset to the right of the track with a nadir gap (map + globe), legend "clouds: no effect", close-up speckled grayscale with rectangular pixels.
+- Altitude slider 705 → 1000 km (Landsat TIRS): period ~99 → ~105 min, swath ~185 → ~263 km, GSD 100 → ~142 m, close-up 30 → 22 px, "what-if" badge on; ↺ resets. SAR: resolution unchanged, swath grows.
+- **● Record** at `10k×`: badge `REC · d · orbits · usable %` keeps running past 1 day; **Stop** holds (`Stopped · …`), **Clear** returns to live.
+- Visual: night passes have no swath ("night: no data"); thermal day + night one color; cloud cells hatched.
 
 ## 9. Mobile layout
 - `resize_window` preset `mobile`, reload. Panels stack; `document.documentElement.scrollWidth === clientWidth` (no horizontal scroll).

@@ -10,7 +10,8 @@ change swath width and ground resolution, and how pushbroom vs whiskbroom sensor
 an FOV slider (fixed detector array → focal length changes), live FOV/IFOV/GSD/swath, and a pixel close-up
 comparing ground truth with what the sensor records — animated row by row (pushbroom) or sweep by sweep
 with calibration pauses (whiskbroom). **Record** accumulates a full day of swaths with drifting clouds:
-cells imaged under cloud are marked unusable, the visual sensor records only in daylight, thermal also at night.
+cells imaged under cloud are marked unusable, the visual sensor records only in daylight, thermal and SAR also at night,
+and SAR sees through clouds with a side-looking swath and nadir gap.
 
 ## Run locally
 ```bash
@@ -23,8 +24,9 @@ Open http://localhost:8000/ — physics tests at http://localhost:8000/tests/.
 - Drag / scroll on the globe to rotate / zoom
 - Space or ⏸ to pause, time-warp buttons for speed, **Now** to jump to real time
 - **View:** *Space* (Earth rotates beneath), *Earth* (camera rotates with Earth — stay over one country), *Satellite* (follow)
-- **Sensor:** switch Thermal (LST) / Visual and Pushbroom / Whiskbroom, drag **FOV**, ↺ resets to the native optics
-- **Record** (map panel): accumulate swaths until the satellite is back over its start or has circled the globe (~15 orbits); try `5000×`
+- **Sensor:** pick a satellite (Landsat 8/9, GCOM-C, Sentinel-1/2, constellr, SatVu, ALOS-2/4, Custom) and instrument; optical: Pushbroom / Whiskbroom / Framing + **FOV**; SAR: **Mode** (IW/EW/SM, StripMap/ScanSAR…)
+- **Orbit:** altitude slider (300–1200 km) — speed, period, SSO inclination, swath, GSD and the close-up follow; ↺ returns to the satellite's real altitude
+- **● Record** (header): accumulate swaths until **Stop** (result is held; **Clear** resets); try `10k×`
 
 ## Project docs
 - [docs/backlog.md](docs/backlog.md) — what's next

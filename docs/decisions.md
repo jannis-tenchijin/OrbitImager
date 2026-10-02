@@ -78,13 +78,12 @@ Presets are Landsat 8/9-like: thermal ≈ TIRS (1850 px, 25 µm, 142.5 µrad →
 **Why:** `@latest` can break mid-event; relative paths make GitHub Pages work under `/<repo>/`.
 
 ## Swath recorder: status stamped at acquisition time (2026-10-02)
-**What:** `js/sim/recorder.js` (`SwathRecorder`) stores one cross-track row every nodal/300 s (~20 s sim): 9 planet-fixed points + per-vertex/per-cell STATUS (`NONE` not recorded, `DAY`, `NIGHT`, `CLOUD`). Map and globe draw only stored rows (+ a per-frame `tail` to "now"). Modes: `live` (rolling last orbit, back-filled on reset), `recording`, `complete` (frozen + stats).
+**What:** `js/sim/recorder.js` (`SwathRecorder`) stores one cross-track row every nodal/300 s (~20 s sim): 9 planet-fixed points (Float32Array) + per-vertex/per-cell STATUS (`NONE` not recorded, `DAY`, `NIGHT`, `CLOUD`). Map and globe draw only stored rows (+ a per-frame `tail` to "now"). Modes: `live` (rolling last orbit, back-filled on reset), `recording` (until **Stop**), `stopped` (held + stats, **Clear** → live). Safety cap `MAX_RECORD_ROWS` = 80k rows (~18 days at 700 km) auto-stops with "buffer full".
 **Why:** Recorded data must not change afterwards — clouds move and FOV can change, but past rows keep what they saw. Also keeps rendering append-only (map: offscreen layer; globe: growable buffers with update ranges).
 **Breaks if:** renderers recompute past swath from the orbit (old approach) — cloud flags and FOV history would be wrong.
 
-## Recording cycle completion (2026-10-02)
-**What:** At each same-phase crossing (argument of latitude = start + 2πk, exact because u(t) is linear): complete if the crossing is within swath/2 of the start point (`back at start`), or if the summed westward crossing shift reaches 360° (`circled globe`). At 700 km: 15 orbits ≈ 24.72 h, ~1,200 km west of start. Result is held until Record again / Clear.
-**Breaks if:** the check uses raw longitude without unwrapping per crossing, or time instead of crossings (orbit-phase would be off).
+## Recording runs until Stop (2026-10-02, supersedes the auto-completing cycle)
+**What:** Jannis wanted recording to continue over many days (revisit build-up), so the "back at start / circled globe" auto-end was removed. Orbits are counted by accumulating Δ(argument of latitude) per row, which survives orbit changes mid-recording.
 
 ## Coverage % uses grid-cell CENTERS inside swath cells (2026-10-02)
 **What:** 0.5° grid, cos-lat weighted; a grid cell counts if its center lies inside a swath cell (spherical point-in-quad via edge-plane signs). Thermal 186 km: ~18% usable/day; visual ~10% (day only); 110° whisk ~98%.
@@ -102,9 +101,26 @@ Presets are Landsat 8/9-like: thermal ≈ TIRS (1850 px, 25 µm, 142.5 µrad →
 ## FOV limits per scan type (2026-10-02)
 **What:** Pushbroom 2–40° (single wide-field telescope), whiskbroom 2–110° (mirror does the scanning). Switching to pushbroom clamps the FOV.
 
-## Visual needs sun ≥ 5°, thermal records at night (2026-10-02)
-**What:** `recordsAtNight` per preset; `VISUAL_MIN_SUN_ELEV_DEG = 5` (checked per point at acquisition). Thermal night rows are `NIGHT` (purple), visual night rows are `NONE` (not drawn).
+## Visual needs sun ≥ 5°, thermal + SAR record at night; one color per sensor (2026-10-02)
+**What:** `recordsAtNight` per instrument; `VISUAL_MIN_SUN_ELEV_DEG = 5` (checked per point at acquisition). Night rows are stored as `NIGHT` but drawn in the **same color** as day (Jannis: one color for LST). Visual night rows are `NONE` (not drawn, legend "night: no data"). SAR ignores clouds (`seesThroughClouds`).
 
 ## Dev server must disable caching (2026-10-02)
 **What:** Use `python3 serve.py` (sends `Cache-Control: no-store`), not `python3 -m http.server`.
 **Why:** Without cache headers the browser mixed a fresh `recordControl.js` with a stale cached `main.js` → `getMode is not a function`. Hard to diagnose mid-event.
+
+## Satellite presets: published values → simulator hardware (2026-10-02)
+**What:** `SATELLITES` in `js/config.js` (Landsat 8/9, GCOM-C, Sentinel-1/2, constellr HiVE, SatVu HotSat, ALOS-2/4, Custom). Optical instruments store the **published nadir GSD + swath** at the mission altitude; `fromPublished()` (`js/physics/instruments.js`) inverts the spherical swath formula (`tan η = sin λ / (k − cos λ)`) → native IFOV and pixel count, so native swath/GSD reproduce the published numbers (tested ≤ 1%). Detector pitch is used for the focal-length tile; where not public it is `null` ("n/a") or flagged in `approx` (shown as "≈ …" in the UI).
+**Cross-checks (tests):** TIRS → 1,838 px / 176 mm (published 1,850 / 176.7 mm); SGLI-IRS → 80° FOV / 447 mm (published 80° / 448 mm); MSI → 590 mm (≈ 600); OLI → 886 mm (886).
+**Sources (research 2026-10-02):** USGS/NASA (Landsat), JAXA EORC + SPIE 2014 (SGLI), SentiWiki (Sentinel-1/2), ESA eoGateway + eoPortal (constellr, SatVu), JAXA EORC (PALSAR-2/3). Status notes: Sentinel-1A ended 2026-06-30 (1C/1D active); SatVu HotSat-1 failed 2023, HotSat-2 operational since 2026-06-29.
+**Approximations:** constellr pitch + LTDN, SatVu altitude (500–536 km) / LTDN / frame size, SAR beam-center incidences and looks. SatVu images targeted scenes; the sim shows a continuous strip.
+
+## Presets set the orbit; altitude slider re-targets it (2026-10-02)
+**What:** Selecting a satellite sets its altitude + LTDN. `retargetOrbit()` builds the new orbit at the current time with the **same argument of latitude** (and the same plane if LTDN is unchanged); the SSO inclination is recomputed, so near the turning latitudes the satellite can shift by up to Δi (~0.8° for 700 → 900 km) — physical, tested. Recorded rows are kept (`recorder.setOrbit`).
+**Effects:** optical GSD = h·IFOV and swath grow with altitude; speed/period/ground speed/line time follow; SAR resolution does not change (antenna look angles fixed → incidence and swath change).
+
+## SAR sensor class (2026-10-02)
+**What:** `kind: 'sar'` instruments have modes `{incCenterDeg, swathKm, resRangeM, resAzM, looks}` at the mission altitude → fixed look angles (`sarLookAngles`). `sarGeometry` gives signed edge angles `{left, right}` (right-looking: both negative) → **offset swath with nadir gap**. Swath edges are generic everywhere (`swathEdges`, `crossTrackPointEci`). Globe: side-looking fan + antenna panel on the look side (+Z = right in the model frame). Close-up: σ⁰ backscatter (linear power averaged), deterministic multi-look gamma speckle, rectangular range × azimuth pixels; wet soil (leak) brighter.
+**Breaks if:** someone averages SAR in dB, or makes SAR resolution depend on FOV/altitude.
+
+## Framing scan type (2026-10-02)
+**What:** Staring 2-D array (SatVu): frame period = frameRows × line time (no gap), dwell up to the frame period; close-up exposes whole frames at once. Third option in the Scan switch.

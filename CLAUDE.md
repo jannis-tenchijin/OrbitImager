@@ -25,7 +25,8 @@ js/config.js          planets, default orbit/sensor, palette, time warps
 js/main.js            app loop: physics -> recorder -> globe + map + panels
 js/physics/time.js    Julian date, planet rotation (GMST), sun direction
 js/physics/orbit.js   Keplerian + J2 propagation, frames, ground track
-js/physics/sensor.js  focal-length sensor model: FOV -> IFOV, GSD, swath
+js/physics/sensor.js  optical (FOV -> IFOV, GSD, swath, push/whisk/framing timing) + SAR geometry
+js/physics/instruments.js  published specs -> hardware (fromPublished), SAR look angles, catalog
 js/geo/land.js        land data loading + shared equirectangular painter
 js/geo/clouds.js      deterministic drifting/evolving cloud field (pure function of time)
 js/sim/recorder.js    swath recorder: rows + status stamped at acquisition, coverage stats
@@ -46,7 +47,9 @@ docs/                 backlog / rejected / decisions
 - Units: km, seconds, radians inside physics. Degrees only at boundaries, named `*Deg`.
 - Physics functions are pure and take a `planet` object — never hard-code Earth constants outside `config.js`.
 - Frames: ECI (Z = north) in physics; `toScene()` in `globe.js` maps to Three.js Y-up. Read `docs/decisions.md` before touching frames.
-- Sensor presets store hardware only (pixels, pitch, native IFOV). FOV slider = focal length; IFOV, GSD, swath are derived in `sensor.js`, never stored.
+- Satellite presets (`SATELLITES`) store PUBLISHED values (GSD, swath, SAR modes) + flag inferred ones in `approx`; derived values (IFOV, pixels, FOV, swath) are computed, never stored. New presets need a source and a test that reproduces the published swath/GSD.
+- FOV slider = focal length (detector array fixed). SAR resolution never depends on FOV or altitude.
+- Swath geometry is always signed edge angles `{left, right}` (+ = left of track), so side-looking SAR works everywhere.
 - Local times / LTDN are MEAN solar time (UTC + lon/15). Never use the apparent sun for RAAN.
 - Recorded swath data comes only from `SwathRecorder`; never recompute past swath from the orbit.
 - The cloud field must stay deterministic (no `Math.random`, no hidden state).

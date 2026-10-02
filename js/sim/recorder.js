@@ -1,13 +1,13 @@
 // Swath recorder: the single source of recorded-swath data for the map and globe.
 // Every `step` of sim time it stores one cross-track row of the swath (9 points, 8 cells) with a
 // STATUS stamped AT ACQUISITION TIME (day / night / cloud / not recorded). Renderers only draw
-// what is stored, so moving clouds or later FOV changes never rewrite recorded data.
+// what is stored, so moving clouds, later FOV changes or orbit changes never rewrite recorded data.
 //
 // Modes: 'live'      rolling window of the last orbit
-//        'recording' accumulate from the press of Record until the cycle completes
-//        'complete'  frozen result + coverage stats (until cleared / re-recorded)
+//        'recording' accumulate from the press of Record until Stop (or the safety cap)
+//        'stopped'   frozen result + coverage stats (until Clear / Record again)
 
-import { propagate, elementsAt, eciToEcef, ecefToLatLon, swathEdgesEci } from '../physics/orbit.js';
+import { propagate, elementsAt, eciToEcef, ecefToLatLon, swathEdges, crossTrackPointEci } from '../physics/orbit.js';
 import { sunEci } from '../physics/time.js';
 
 export const STATUS = { NONE: 0, DAY: 1, NIGHT: 2, CLOUD: 3 };
@@ -17,9 +17,9 @@ const SAMPLES_PER_ORBIT = 300;
 const GRID_DEG = 0.5;               // coverage grid resolution
 const GRID_W = 360 / GRID_DEG, GRID_H = 180 / GRID_DEG;
 const DEG = Math.PI / 180;
+const TWO_PI = 2 * Math.PI;
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const angle = (a, b) => Math.acos(Math.max(-1, Math.min(1, dot(a, b))));
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 function nlerp(a, b, f) {
   const v = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
@@ -27,20 +27,23 @@ function nlerp(a, b, f) {
   return [v[0] / n, v[1] / n, v[2] / n];
 }
 const wrap180 = (x) => ((((x + 180) % 360) + 360) % 360) - 180;
+const wrapPi = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+/** Point c of a row (pts is a Float32Array of 9 x 3 unit vectors). */
+const rowPoint = (pts, c) => [pts[3 * c], pts[3 * c + 1], pts[3 * c + 2]];
 
 export class SwathRecorder {
   /**
    * orbit: createOrbit() result. clouds: { isCloudy(u, tMs) } or null.
    * minSunElevDeg: sun elevation needed by sensors that do NOT record at night.
+   * maxRows: recording safety cap (memory); reaching it stops the recording.
    */
-  constructor(orbit, { clouds = null, minSunElevDeg = 5 } = {}) {
-    this.orbit = orbit;
+  constructor(orbit, { clouds = null, minSunElevDeg = 5, maxRows = 80000 } = {}) {
     this.R = orbit.planet.radiusKm;
     this.clouds = clouds;
     this.sinMinElev = Math.sin(minSunElevDeg * DEG);
-    this.periodMs = orbit.nodalPeriodS * 1000;
-    this.stepMs = this.periodMs / SAMPLES_PER_ORBIT;
-    this.sensor = { swathKm: 0, sensorId: 'thermal', recordsAtNight: true };
+    this.maxRows = maxRows;
+    this.setOrbit(orbit);
+    this.sensor = { edges: { left: 0, right: 0 }, kind: 'thermal', recordsAtNight: true, seesThroughClouds: false };
     this.samples = [];
     this.version = 0;      // bumps whenever samples are removed (renderers do a full redraw)
     this.mode = 'live';
@@ -49,9 +52,20 @@ export class SwathRecorder {
     this.totalArea = this.rowArea.reduce((a, b) => a + b, 0) * GRID_W;
   }
 
-  /** Sensor parameters applied to FUTURE samples (past rows keep what they were recorded with). */
-  configure({ swathKm, sensorId, recordsAtNight }) {
-    this.sensor = { swathKm, sensorId, recordsAtNight };
+  /** New orbit for FUTURE rows (e.g. altitude change). Recorded rows are kept. */
+  setOrbit(orbit) {
+    this.orbit = orbit;
+    this.periodMs = orbit.nodalPeriodS * 1000;
+    this.stepMs = this.periodMs / SAMPLES_PER_ORBIT;
+    this.lastU = null; // orbit counting restarts its phase reference on the new orbit
+  }
+
+  /**
+   * Sensor parameters applied to FUTURE rows: { edges | swathKm, kind, recordsAtNight,
+   * seesThroughClouds }. edges = signed Earth-central angles {left, right} (+ = left of track).
+   */
+  configure({ edges, swathKm, kind = 'thermal', recordsAtNight = true, seesThroughClouds = false }) {
+    this.sensor = { edges: edges ?? swathEdges(swathKm, this.R), kind, recordsAtNight, seesThroughClouds };
   }
 
   /** Live mode, back-filled with the last orbit (the cloud field is a pure function of time). */
@@ -59,58 +73,42 @@ export class SwathRecorder {
     this.mode = 'live';
     this.samples = [];
     this.version++;
+    this.stats = null;
     this.lastT = tMs - this.periodMs - this.stepMs;
     this.advance(tMs);
   }
 
-  /** Start a new recording at tMs (clears everything). */
+  /** Start a new recording at tMs (clears everything). Runs until stop(). */
   startRecording(tMs) {
     this.mode = 'recording';
     this.samples = [];
     this.version++;
     this.grid.fill(0);
-    this.stats = { usableArea: 0, cloudOnlyArea: 0, imagedArea: 0, orbits: 0, reason: null };
-    const sub = this.subPoint(tMs);
-    const el = elementsAt(this.orbit, tMs);
-    this.start = { tMs, u0: el.argp + el.M, p0: sub.u, lastCrossLon: sub.lonDeg, shiftSum: 0, k: 0 };
-    // Estimated cycle length: orbits until the same-phase crossing has walked 360 deg around
-    const shiftPerOrbit = Math.abs(this.crossingShiftDeg());
-    this.start.expectedOrbits = Math.ceil(360 / shiftPerOrbit);
+    this.stats = { usableArea: 0, cloudOnlyArea: 0, imagedArea: 0, turns: 0, startMs: tMs, endMs: tMs, reason: null };
+    this.lastU = null;
     this.lastT = tMs - this.stepMs;
     this.addSample(tMs);
     this.lastT = tMs;
   }
 
-  /** Westward shift (deg) of the ground track per nodal orbit: Earth turns under the orbit plane. */
-  crossingShiftDeg() {
-    const p = this.orbit.planet;
-    const earthRate = (2 * Math.PI) / p.siderealDayS - this.orbit.raanDot; // rad/s relative to plane
-    return -(earthRate * this.orbit.nodalPeriodS) / DEG;
-  }
-
-  /** Progress through the expected cycle, 0..1 (recording) */
-  progress(tMs) {
-    if (this.mode === 'complete') return 1;
-    if (this.mode !== 'recording') return 0;
-    return Math.min(1, (tMs - this.start.tMs) / (this.start.expectedOrbits * this.periodMs));
-  }
-
-  subPoint(tMs) {
-    const st = propagate(this.orbit, tMs);
-    const r = Math.hypot(...st.pos);
-    const u = eciToEcef(st.pos.map((x) => x / r), st.theta);
-    const g = ecefToLatLon(u, 1);
-    return { u, latDeg: g.latDeg, lonDeg: g.lonDeg };
+  /** Stop recording and hold the result. */
+  stop(reason = 'stopped') {
+    if (this.mode !== 'recording') return;
+    this.mode = 'stopped';
+    this.stats.reason = reason;
   }
 
   /** Advance to tMs, storing samples on the fixed step grid. */
   advance(tMs) {
-    if (this.mode === 'complete') return;
+    if (this.mode === 'stopped') return;
     while (this.lastT + this.stepMs <= tMs) {
       const tb = this.lastT + this.stepMs;
-      if (this.mode === 'recording' && this.checkCompletion(this.lastT, tb)) return;
       this.addSample(tb);
       this.lastT = tb;
+      if (this.mode === 'recording' && this.samples.length >= this.maxRows) {
+        this.stop('buffer full');
+        return;
+      }
     }
     if (this.mode === 'live') {
       const cutoff = tMs - this.periodMs;
@@ -123,77 +121,58 @@ export class SwathRecorder {
     }
   }
 
-  /**
-   * Same-phase crossings (argument of latitude = u0 + 2*pi*k) between ta and tb.
-   * Completes when the crossing is within half a swath of the start point ('back at start'),
-   * or when crossings have walked 360 deg around the globe ('circled globe').
-   */
-  checkCompletion(ta, tb) {
-    const s = this.start;
-    const u = (t) => {
-      const el = elementsAt(this.orbit, t);
-      return el.argp + el.M;
-    };
-    const target = s.u0 + 2 * Math.PI * (s.k + 1);
-    const ua = u(ta), ub = u(tb);
-    if (ub < target) return false;
-    const tc = ta + ((target - ua) / (ub - ua)) * (tb - ta); // u(t) is linear in t
-    const sub = this.subPoint(tc);
-    s.k++;
-    s.shiftSum += wrap180(sub.lonDeg - s.lastCrossLon);
-    s.lastCrossLon = sub.lonDeg;
-    this.stats.orbits = s.k;
-    const distKm = angle(sub.u, s.p0) * this.R;
-    let reason = null;
-    if (distKm <= this.sensor.swathKm / 2) reason = 'back at start';
-    else if (Math.abs(s.shiftSum) >= 360) reason = 'circled globe';
-    if (!reason) return false;
-    this.addSample(tc);
-    this.lastT = tc;
-    this.mode = 'complete';
-    this.stats.reason = reason;
-    this.stats.completedAt = tc;
-    return true;
-  }
-
   /** Status of one planet-fixed point given the sun direction (planet-fixed). */
   status(u, sun, tMs) {
     const sinElev = dot(u, sun);
     if (!this.sensor.recordsAtNight && sinElev < this.sinMinElev) return STATUS.NONE;
-    if (this.clouds && this.clouds.isCloudy(u, tMs)) return STATUS.CLOUD;
+    if (!this.sensor.seesThroughClouds && this.clouds && this.clouds.isCloudy(u, tMs)) return STATUS.CLOUD;
     return sinElev >= 0 ? STATUS.DAY : STATUS.NIGHT;
   }
 
   /** Build one swath row at tMs (not stored). */
   makeSample(tMs) {
     const st = propagate(this.orbit, tMs);
-    const lam = Number.isFinite(this.sensor.swathKm) ? this.sensor.swathKm / (2 * this.R) : 0;
-    const { left, right } = swathEdgesEci(st.pos, st.vel, Math.cos(lam), Math.sin(lam));
+    const { left, right } = this.sensor.edges;
     const sun = eciToEcef(sunEci(tMs).dir, st.theta);
-    const pts = [], lat = new Float32Array(VERTS), lon = new Float32Array(VERTS);
+    const pts = new Float32Array(VERTS * 3), lat = new Float32Array(VERTS), lon = new Float32Array(VERTS);
     const vst = new Uint8Array(VERTS), cst = new Uint8Array(CROSS_CELLS);
+    const P = [];
     for (let c = 0; c < VERTS; c++) {
-      const p = eciToEcef(nlerp(left, right, c / CROSS_CELLS), st.theta);
-      pts.push(p);
+      const lam = left + ((right - left) * c) / CROSS_CELLS; // left -> right across the swath
+      const p = eciToEcef(crossTrackPointEci(st.pos, st.vel, Number.isFinite(lam) ? lam : 0), st.theta);
+      P.push(p);
+      pts.set(p, 3 * c);
       const g = ecefToLatLon(p, 1);
       lat[c] = g.latDeg;
       lon[c] = g.lonDeg;
       vst[c] = this.status(p, sun, tMs);
     }
-    for (let c = 0; c < CROSS_CELLS; c++) cst[c] = this.status(nlerp(pts[c], pts[c + 1], 0.5), sun, tMs);
-    return { tMs, pts, lat, lon, vst, cst, sensorId: this.sensor.sensorId };
+    for (let c = 0; c < CROSS_CELLS; c++) cst[c] = this.status(nlerp(P[c], P[c + 1], 0.5), sun, tMs);
+    return { tMs, pts, lat, lon, vst, cst, kind: this.sensor.kind };
   }
 
   addSample(tMs) {
     const s = this.makeSample(tMs);
     const prev = this.samples[this.samples.length - 1];
     this.samples.push(s);
-    if (this.mode === 'recording' && prev) this.markCoverage(prev, s);
+    if (this.mode === 'recording') {
+      this.countTurns(tMs);
+      this.stats.endMs = tMs;
+      if (prev) this.markCoverage(prev, s);
+    }
+  }
+
+  /** Accumulate orbits flown (argument of latitude), robust to orbit changes mid-recording. */
+  countTurns(tMs) {
+    const el = elementsAt(this.orbit, tMs);
+    const u = el.argp + el.M;
+    if (this.lastU !== null) this.stats.turns += wrapPi(u - this.lastU) / TWO_PI;
+    this.lastU = u;
   }
 
   /** Provisional row at "now" so the drawn swath reaches the scan line between samples. */
   tail(tMs) {
-    if (this.mode === 'complete' || !this.samples.length) return null;
+    if (this.mode === 'stopped' || !this.samples.length) return null;
     return this.makeSample(tMs);
   }
 
@@ -205,7 +184,9 @@ export class SwathRecorder {
   markCoverage(a, b) {
     for (let c = 0; c < CROSS_CELLS; c++) {
       const st = b.cst[c];
-      if (st !== STATUS.NONE) this.markQuad([a.pts[c], a.pts[c + 1], b.pts[c + 1], b.pts[c]], st === STATUS.CLOUD ? 2 : 1);
+      if (st === STATUS.NONE) continue;
+      const quad = [rowPoint(a.pts, c), rowPoint(a.pts, c + 1), rowPoint(b.pts, c + 1), rowPoint(b.pts, c)];
+      this.markQuad(quad, st === STATUS.CLOUD ? 2 : 1);
     }
   }
 
@@ -249,12 +230,13 @@ export class SwathRecorder {
     }
   }
 
-  /** Coverage summary (percent). */
+  /** Coverage summary: days, orbits, usable % of globe, % of imaged area only seen cloudy. */
   summary() {
     const s = this.stats;
     if (!s) return null;
     return {
-      orbits: s.orbits,
+      days: (s.endMs - s.startMs) / 86400000,
+      orbits: Math.floor(s.turns),
       reason: s.reason,
       usablePct: (100 * s.usableArea) / this.totalArea,
       cloudyPct: s.imagedArea ? (100 * s.cloudOnlyArea) / s.imagedArea : 0,

@@ -10,7 +10,10 @@ Format: `- [ ] **Title** — one-line why/what (added YYYY-MM-DD)`
 - [ ] **Bow-tie effect** — whiskbroom pixels grow off-nadir so consecutive sweeps overlap at the swath edge (MODIS-style). (2026-10-02)
 - [ ] **Revisit statistics per AOI** — from a recording: how often and at what local time each AOI was seen clear. (2026-10-02)
 - [ ] **Cloud-free composite** — over several cycles, show where at least one clear look exists. (2026-10-02)
-- [ ] **Altitude slider** — same panel as FOV; altitude changes swath *and* GSD together. Needs orbit re-creation on change. (2026-10-02)
+- [ ] **Band selection per instrument** — e.g. OLI pan 15 m, MSI 20/60 m, SGLI 1 km channels. (2026-10-02)
+- [ ] **SatVu targeted scenes** — discrete 3.5 × 4.5 km frames instead of a continuous strip. (2026-10-02)
+- [ ] **Left-looking SAR toggle + InSAR repeat-pass hint** — ALOS can look left; show repeat-cycle geometry. (2026-10-02)
+- [ ] **LTDN slider** — explore dawn-dusk vs 10:30 vs noon orbits (presets already set it). (2026-10-02)
 - [ ] **Edge-GSD visualization** — show pixel stretch toward swath edge (bow-tie for whiskbroom); tile already shows `GSD edge`. (2026-10-02)
 
 ## Orbit & planet
@@ -45,3 +48,8 @@ Format: `- [ ] **Title** — one-line why/what (added YYYY-MM-DD)`
 - [x] Pushbroom row-by-row and whiskbroom sweep + calibration animation in the close-up (2026-10-02)
 - [x] Whiskbroom scan type: rotating mirror model, 3D beam, timing tiles, wider FOV limit (2026-10-02)
 - [x] No-cache dev server `serve.py` (2026-10-02)
+- [x] Satellite presets: Landsat 8/9, GCOM-C, Sentinel-1/2, constellr, SatVu, ALOS-2/4 (+ Custom) (2026-10-02)
+- [x] SAR sensor class (side-looking, modes, speckle close-up, sees through clouds) (2026-10-02)
+- [x] Framing scan type (SatVu) (2026-10-02)
+- [x] Altitude slider with SSO re-targeting (2026-10-02)
+- [x] Record until Stop (hold + Clear), big Record button, REC badge, 10000× warp (2026-10-02)

@@ -11,7 +11,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { SCENE_KM_PER_UNIT } from '../config.js';
 import { createSatelliteModel } from './satelliteModel.js';
-import { latLonToEcef, swathEdgesEci } from '../physics/orbit.js';
+import { latLonToEcef, crossTrackPointEci } from '../physics/orbit.js';
 import { STATUS, CROSS_CELLS } from '../sim/recorder.js';
 
 const SWATH_VERTS = CROSS_CELLS + 1; // recorder rows: 9 points across (8 cells)
@@ -57,7 +57,7 @@ export class Globe {
     this.buildOrbitViz();
     this.buildSwathViz();
 
-    this.sat = createSatelliteModel({ scale: satelliteScale, instrument: scan, band: sensor.id });
+    this.sat = createSatelliteModel({ scale: satelliteScale, instrument: scan, band: sensor.kind });
     this.scene.add(this.sat.object);
     this.applySatelliteEnvMap();
     this.setSensor(sensor, scan);
@@ -292,13 +292,13 @@ export class Globe {
     this.scene.add(this.scanLine);
   }
 
-  /** Recolor fan/rays and swap the instrument model (scan type + band). */
-  setSensor(preset, scan) {
-    const color = new THREE.Color(this.palette.swath[preset.id]);
+  /** Recolor fan/rays and swap the instrument model (scan type + kind; SAR gets an antenna). */
+  setSensor(inst, scan) {
+    const color = new THREE.Color(this.palette.swath[inst.kind]);
     this.fanMat.color.copy(color);
     this.rayMat.color.copy(color);
-    this.scan = scan;
-    this.sat.setInstrument(scan, preset.id);
+    this.scan = inst.kind === 'sar' ? 'sar' : scan;
+    this.sat.setInstrument(this.scan, inst.kind, { lookSide: inst.lookSide });
   }
 
   /** Grow the swath buffers (doubling) and rebuild the index; forces a full rewrite. */
@@ -325,15 +325,15 @@ export class Globe {
     this.swathDrawn.version = -1;
   }
 
-  /** RGBA for a recorded status (cached per sensor). */
-  statusRgba(sensorId, st) {
+  /** RGBA for a recorded status (cached per sensor kind). Day and night share one color. */
+  statusRgba(kind, st) {
     this.rgbaCache = this.rgbaCache || {};
-    const key = sensorId + st;
+    const key = kind + st;
     if (!this.rgbaCache[key]) {
       const pal = this.palette;
       const [hex, a] = {
-        [STATUS.DAY]: [pal.swath[sensorId], 0.45],
-        [STATUS.NIGHT]: [pal.swathNight, 0.45],
+        [STATUS.DAY]: [pal.swath[kind], 0.45],
+        [STATUS.NIGHT]: [pal.swath[kind], 0.45],
         [STATUS.CLOUD]: [pal.cloudMask, 0.8],
         [STATUS.NONE]: ['#000000', 0],
       }[st];
@@ -347,9 +347,9 @@ export class Globe {
     const pos = this.swathGeo.attributes.position.array, col = this.swathGeo.attributes.color.array;
     const r = (this.planet.radiusKm + 12) / SCENE_KM_PER_UNIT; // just above the faceted surface
     for (let c = 0; c < SWATH_VERTS; c++) {
-      const p = row.pts[c], o = (i * SWATH_VERTS + c) * 3;
-      pos[o] = p[0] * r; pos[o + 1] = p[2] * r; pos[o + 2] = -p[1] * r; // planet-fixed -> scene axes
-      const rgba = this.statusRgba(row.sensorId, row.vst[c]), oc = (i * SWATH_VERTS + c) * 4;
+      const p = row.pts, o = (i * SWATH_VERTS + c) * 3, q = 3 * c;
+      pos[o] = p[q] * r; pos[o + 1] = p[q + 2] * r; pos[o + 2] = -p[q + 1] * r; // planet-fixed -> scene axes
+      const rgba = this.statusRgba(row.kind, row.vst[c]), oc = (i * SWATH_VERTS + c) * 4;
       col[oc] = rgba[0]; col[oc + 1] = rgba[1]; col[oc + 2] = rgba[2]; col[oc + 3] = rgba[3];
     }
   }
@@ -391,10 +391,12 @@ export class Globe {
    * Whiskbroom: narrow beam sweeping across the swath during the Earth-view share (eta) of each
    * mirror cycle, then nothing while the mirror views the calibration targets.
    */
-  updateFan(p, pos, vel, swathKm, beam) {
-    const lam = Number.isFinite(swathKm) ? swathKm / (2 * this.planet.radiusKm) : 0;
-    const { left, right } = swathEdgesEci(pos, vel, Math.cos(lam), Math.sin(lam));
+  updateFan(p, pos, vel, edges, beam) {
+    const fin = (x) => (Number.isFinite(x) ? x : 0);
+    const left = crossTrackPointEci(pos, vel, fin(edges.left));
+    const right = crossTrackPointEci(pos, vel, fin(edges.right));
     const L = toScene(left.map((x) => x * 1000)), Rv = toScene(right.map((x) => x * 1000));
+    if (this.scan === 'sar') this.sat.animate({ pulse: 0.5 + 0.5 * Math.sin(performance.now() / 90) });
 
     let a0 = 0, a1 = 1, line1 = 1, active = true;
     const whisk = !!beam;
@@ -407,7 +409,8 @@ export class Globe {
     }
     this.fan.visible = active;
     this.scanLine.visible = active;
-    this.fanMat.opacity = whisk ? 0.55 : 0.22;
+    // SAR: radar "pulse" shimmer on the side-looking beam
+    this.fanMat.opacity = whisk ? 0.55 : this.scan === 'sar' ? 0.12 + 0.14 * (0.5 + 0.5 * Math.sin(performance.now() / 90)) : 0.22;
     this.rayMat.opacity = whisk ? 0.35 : 0.85;
 
     const fanPos = this.fan.geometry.attributes.position;
@@ -492,10 +495,10 @@ export class Globe {
   /**
    * Per-frame update.
    * state: { pos, vel (ECI km), theta (rad), sunDir (ECI unit), orbitPath (ECI km[]),
-   *          pastTrack [{latDeg, lonDeg}], swathKm, beam, recorder, tail, cloudSystems }
+   *          pastTrack [{latDeg, lonDeg}], edges {left, right} (rad), beam, recorder, tail, cloudSystems }
    *  beam: null for pushbroom, { active, sweep, phase } for whiskbroom.
    */
-  update({ pos, vel, theta, sunDir, orbitPath, pastTrack, swathKm, beam, recorder, tail, cloudSystems }) {
+  update({ pos, vel, theta, sunDir, orbitPath, pastTrack, edges, beam, recorder, tail, cloudSystems }) {
     // Planet rotation (ECEF -> ECI is +theta about the pole, i.e. +theta about scene Y)
     this.planetGroup.rotation.y = theta;
     this.updateClouds(cloudSystems);
@@ -552,7 +555,7 @@ export class Globe {
 
     // Recorded swath (planet-fixed) and live FOV fan / whisk beam (inertial)
     this.syncSwath(recorder, tail);
-    this.updateFan(p, pos, vel, swathKm, beam);
+    this.updateFan(p, pos, vel, edges, beam);
 
     // First frame: put the camera above the satellite, slightly ahead and north
     if (!this.framed) {
