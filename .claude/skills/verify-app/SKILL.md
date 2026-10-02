@@ -48,7 +48,7 @@ JSON.stringify({ swath: __app.geom.swathKm, gsd: __app.geom.gsdNadirM, f: __app.
 - Loop all presets via `__app.panel.select(satId, instId)` (ids in `__app.catalog`): no console errors; tiles match published values (e.g. Landsat TIRS 185 km / 100 m / ~176 mm, SGLI-IRS 1400 km / 250 m / whisk 20 rows, S1 IW 250 km incidence ~29–45°).
 - SAR: swath offset to the right of the track with a nadir gap (map + globe), legend "clouds: no effect", close-up speckled grayscale with rectangular pixels.
 - Altitude slider 705 → 1000 km (Landsat TIRS): period ~99 → ~105 min, swath ~185 → ~263 km, GSD 100 → ~142 m, close-up 30 → 22 px, "what-if" badge on; ↺ resets. SAR: resolution unchanged, swath grows.
-- **● Record** at `10k×`: badge `REC · d · orbits · usable %` keeps running past 1 day; **Stop** holds (`Stopped · …`), **Clear** returns to live.
+- **● Record** (Results card) at `10k×`/`50k×`: Results tiles keep updating past 1 day; **Stop** holds (button "Record new"), **Clear** returns to live. No stats badge on the map.
 - Visual: night passes have no swath ("night: no data"); thermal day + night one color; cloud cells hatched.
 
 - Results: after Stop the Results card shows covered % ≥ usable %; 📍 Pick place → click Tokyo on the map → images / cloudy / usable + "1 image every X days" (Landsat TIRS ~3 d: ~1 image).

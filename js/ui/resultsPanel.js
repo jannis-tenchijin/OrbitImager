@@ -26,10 +26,10 @@ const daysText = (d) => (Number.isFinite(d) ? `${d < 10 ? d.toFixed(1) : d.toFix
 export function createResultsPanel(container, { onPickStart, onClearPlace }) {
   container.innerHTML = `
     <div class="card-head">
-      <h2 class="card-title accent">Results</h2>
-      <span class="hint results-state"></span>
+      <h2 class="card-title accent">Results <span class="hint results-state"></span></h2>
+      <div class="rec-host"></div>
     </div>
-    <div class="results-empty">Press <b>● Record</b> to collect coverage and revisit statistics.</div>
+    <div class="results-empty">Press <b>● Record</b> to collect coverage and revisit statistics until you press Stop.</div>
     <div class="results-body" hidden>
       <div class="hud-grid global"></div>
       <div class="place-row">
@@ -63,6 +63,9 @@ export function createResultsPanel(container, { onPickStart, onClearPlace }) {
   $('.clear-place').addEventListener('click', onClearPlace);
 
   return {
+    /** Where the Record / Stop / Clear buttons live. */
+    recHost: $('.rec-host'),
+
     /** Picking finished (place chosen or cancelled). */
     pickDone() {
       pickBtn.classList.remove('armed');

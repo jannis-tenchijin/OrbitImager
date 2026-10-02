@@ -26,7 +26,7 @@ Open http://localhost:8000/ — physics tests at http://localhost:8000/tests/.
 - **View:** *Space* (Earth rotates beneath), *Earth* (camera rotates with Earth — stay over one country), *Satellite* (follow)
 - **Sensor:** pick a satellite (Landsat 8/9, GCOM-C, Sentinel-1/2, constellr, SatVu, ALOS-2/4, Custom) and instrument; optical: Pushbroom / Whiskbroom / Framing + **FOV**; SAR: **Mode** (IW/EW/SM, StripMap/ScanSAR…)
 - **Orbit:** altitude slider (300–1200 km) — speed, period, SSO inclination, swath, GSD and the close-up follow; ↺ returns to the satellite's real altitude
-- **● Record** (header): accumulate swaths until **Stop** (result is held; **Clear** resets); try `10k×`
+- **● Record** (Results card, under the 3D view): accumulate swaths until **Stop** (result is held; **Clear** resets); try `10k×` or `50k×`
 - **Results** (under the 3D view): Earth covered % and usable (cloud-free) %; **📍 Pick place** on the map → images, cloudy, "1 image every X days"
 - **SatVu** images only 80 tasked cities (3.5 × 4.5 km frames within ±30° off-nadir), no continuous strip
 

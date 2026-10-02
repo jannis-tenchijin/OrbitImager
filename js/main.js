@@ -82,14 +82,8 @@ const results = createResultsPanel(document.getElementById('results'), {
     globe.setPin(null);
   },
 });
-const inset = new PixelInset(document.getElementById('closeup-host'), PALETTE, CLOSEUP);
-const hud = createHud(document.getElementById('hud'), {
-  altRange: ALTITUDE_RANGE_KM,
-  onAltitude: (km) => setOrbit({ altitudeKm: km, ltdnHours: orbit.ltdnHours }),
-  onResetAltitude: () => setOrbit({ ...catalog[panel.state.satId].orbit }),
-});
 const recCtl = createRecordControl(
-  { buttonHost: document.getElementById('rec-host'), badge: document.getElementById('rec-badge'), legend: document.getElementById('map-legend') },
+  { buttonHost: results.recHost, legend: document.getElementById('map-legend') },
   PALETTE,
   {
     onRecord: () => recorder.startRecording(clock.simMs),
@@ -98,6 +92,13 @@ const recCtl = createRecordControl(
     getMode: () => recorder.mode,
   },
 );
+
+const inset = new PixelInset(document.getElementById('closeup-host'), PALETTE, CLOSEUP);
+const hud = createHud(document.getElementById('hud'), {
+  altRange: ALTITUDE_RANGE_KM,
+  onAltitude: (km) => setOrbit({ altitudeKm: km, ltdnHours: orbit.ltdnHours }),
+  onResetAltitude: () => setOrbit({ ...catalog[panel.state.satId].orbit }),
+});
 const panel = createSensorPanel(document.getElementById('sensor-panel'), {
   catalog,
   fovRanges: FOV_RANGE_DEG,

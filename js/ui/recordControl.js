@@ -1,12 +1,10 @@
-// Record control: big red Record / Stop button (header), Clear after stopping, a REC status
-// badge on the map, and the swath legend (depends on the sensor kind).
+// Record control: big red Record / Stop button + Clear (in the Results card) and the swath
+// legend on the map (depends on the sensor kind). Statistics live in the Results card only.
 
-import { fmt } from './hud.js';
-
-export function createRecordControl({ buttonHost, badge, legend }, palette, { onRecord, onStop, onClear, getMode }) {
+export function createRecordControl({ buttonHost, legend }, palette, { onRecord, onStop, onClear, getMode }) {
   buttonHost.innerHTML = `
     <button class="rec-main" type="button"></button>
-    <button class="text-btn rec-clear" type="button" hidden title="Clear the recorded swaths and return to the live last-orbit view">Clear</button>`;
+    <button class="text-btn small rec-clear" type="button" hidden title="Clear the recorded swaths and return to the live last-orbit view">Clear</button>`;
   const btn = buttonHost.querySelector('.rec-main');
   const clear = buttonHost.querySelector('.rec-clear');
   let mode = null;
@@ -15,38 +13,19 @@ export function createRecordControl({ buttonHost, badge, legend }, palette, { on
   btn.addEventListener('click', () => (getMode() === 'recording' ? onStop() : onRecord()));
   clear.addEventListener('click', onClear);
 
-  let last = 0;
   return {
-    /** Refresh button + badge from the recorder (text throttled to ~5 Hz). */
-    update(rec, force = false) {
-      if (rec.mode !== mode) {
-        mode = rec.mode;
-        buttonHost.dataset.mode = mode;
-        badge.dataset.mode = mode;
-        btn.innerHTML = mode === 'recording'
-          ? '<span class="rec-square"></span>Stop'
-          : `<span class="rec-dot"></span>${mode === 'stopped' ? 'Record new' : 'Record'}`;
-        btn.title = mode === 'recording'
-          ? 'Stop recording and keep the result on screen'
-          : 'Record every swath until you press Stop';
-        clear.hidden = mode !== 'stopped';
-        badge.hidden = mode === 'live';
-        force = true;
-      }
-      const now = performance.now();
-      if (!force && now - last < 200) return;
-      last = now;
-      const s = rec.summary();
-      if (!s) return;
-      const core = `${s.days.toFixed(1)} d · ${s.orbits} orbits · covered ${fmt.pct(s.coveredPct)} · usable ${fmt.pct(s.usablePct)}`;
-      if (mode === 'recording') {
-        badge.innerHTML = `<span class="rec-live"></span>REC · ${core}`;
-        badge.title = `Recording for ${s.days.toFixed(2)} days (${s.orbits} orbits). Usable (cloud-free) coverage: ${s.usablePct.toFixed(1)}% of the globe.`;
-      } else if (mode === 'stopped') {
-        const why = s.reason === 'buffer full' ? ' · buffer full' : '';
-        badge.textContent = `Stopped · ${core}${why}`;
-        badge.title = `${s.days.toFixed(2)} days, ${s.orbits} orbits. Usable coverage ${s.usablePct.toFixed(1)}% of the globe; ${s.cloudyPct.toFixed(1)}% of the imaged area was only seen under cloud.${why ? ' Recording stopped at the memory cap.' : ''}`;
-      }
+    /** Refresh the button for the recorder mode. */
+    update(rec) {
+      if (rec.mode === mode) return;
+      mode = rec.mode;
+      buttonHost.dataset.mode = mode;
+      btn.innerHTML = mode === 'recording'
+        ? '<span class="rec-square"></span>Stop'
+        : `<span class="rec-dot"></span>${mode === 'stopped' ? 'Record new' : 'Record'}`;
+      btn.title = mode === 'recording'
+        ? 'Stop recording and keep the result on screen'
+        : 'Record every swath until you press Stop';
+      clear.hidden = mode !== 'stopped';
     },
 
     /** Swath legend for the active instrument kind. Day and night share one color. */

@@ -22,6 +22,12 @@ const GRID_DEG = 0.5;               // coverage grid resolution
 const GRID_W = 360 / GRID_DEG, GRID_H = 180 / GRID_DEG;
 const DEG = Math.PI / 180;
 const TWO_PI = 2 * Math.PI;
+// Precomputed grid-cell center trig (coverage marking runs ~40x per frame at 50k×)
+const COL_COS = Float64Array.from({ length: GRID_W }, (_, c) => Math.cos((-180 + (c + 0.5) * GRID_DEG) * DEG));
+const COL_SIN = Float64Array.from({ length: GRID_W }, (_, c) => Math.sin((-180 + (c + 0.5) * GRID_DEG) * DEG));
+const ROW_COS = Float64Array.from({ length: GRID_H }, (_, r) => Math.cos((90 - (r + 0.5) * GRID_DEG) * DEG));
+const ROW_SIN = Float64Array.from({ length: GRID_H }, (_, r) => Math.sin((90 - (r + 0.5) * GRID_DEG) * DEG));
+const NORTH = [0, 0, 1], SOUTH = [0, 0, -1];
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -299,16 +305,22 @@ export class SwathRecorder {
     const lons = V.map((v) => lon0 + wrap180(Math.atan2(v[1], v[0]) / DEG - lon0));
     const latMax = Math.max(...lats), latMin = Math.min(...lats);
     const r0 = Math.max(0, Math.floor((90 - latMax) / GRID_DEG)), r1 = Math.min(GRID_H - 1, Math.floor((90 - latMin) / GRID_DEG));
-    // Near a pole the longitude span is ill-defined: scan all columns in the row band
-    const polar = Math.max(Math.abs(latMax), Math.abs(latMin)) > 80;
+    // Only a quad that contains a pole has an ill-defined longitude span: then scan whole rows
+    // from that pole to the quad's far edge
+    const north = quadContains(V, NORTH), south = quadContains(V, SOUTH);
+    const polar = north || south;
     const c0 = polar ? 0 : Math.floor((Math.min(...lons) + 180) / GRID_DEG);
     const c1 = polar ? GRID_W - 1 : Math.floor((Math.max(...lons) + 180) / GRID_DEG);
-    for (let r = r0; r <= r1; r++) {
-      const lat = (90 - (r + 0.5) * GRID_DEG) * DEG, cl = Math.cos(lat), sl = Math.sin(lat);
+    const rStart = north ? 0 : r0, rEnd = south ? GRID_H - 1 : r1;
+    const P = [0, 0, 0];
+    for (let r = rStart; r <= rEnd; r++) {
+      const cl = ROW_COS[r];
+      P[2] = ROW_SIN[r];
       for (let cc = c0; cc <= c1; cc++) {
         const col = ((cc % GRID_W) + GRID_W) % GRID_W;
-        const lon = (-180 + (col + 0.5) * GRID_DEG) * DEG;
-        if (quadContains(V, [cl * Math.cos(lon), cl * Math.sin(lon), sl])) this.markIndex(r * GRID_W + col, r, bit);
+        P[0] = cl * COL_COS[col];
+        P[1] = cl * COL_SIN[col];
+        if (quadContains(V, P)) this.markIndex(r * GRID_W + col, r, bit);
       }
     }
   }

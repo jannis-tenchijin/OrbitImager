@@ -199,7 +199,7 @@ export const SCENE_KM_PER_UNIT = 1000;
 // Exaggeration factor for the satellite model (real size would be invisible).
 export const SATELLITE_MODEL_SCALE = 1.0;
 
-export const TIME_WARPS = [1, 10, 60, 300, 1000, 5000, 10000];
+export const TIME_WARPS = [1, 10, 60, 300, 1000, 5000, 10000, 50000];
 export const DEFAULT_WARP = 60;
 
 // Shared palette so the globe texture and 2D map look identical.

@@ -138,3 +138,10 @@ Presets are Landsat 8/9-like: thermal ≈ TIRS (1850 px, 25 µm, 142.5 µrad →
 ## One-window layout (2026-10-02)
 **What:** No page scrollbar on desktop. Left: 3D view (flex) over [Orbit | Results]; right: map (flex, Map2D letterboxes) over [Sensor | close-up]. Compact tiles; below 860 px window height the explanatory slider notes hide. Verified at 1280×760, 1440×900, 1920×1080 for all presets (`scrollHeight === innerHeight`). Phones (< 900 px) stack and scroll.
 **Breaks if:** cards get `flex: 1` or fixed heights, or new content is added to the cards without checking 1280×760.
+
+## 50k× performance budget (2026-10-02)
+**What:** At 50k× one frame advances ~833 s = ~42 swath rows. To stay well inside a 16 ms frame: the cloud field is evaluated on a 2-min time grid (drift ≤ 1.7 km, still a pure function of time) with a 10° latitude-band index for `isCloudy`; coverage marking uses precomputed grid trig and only scans whole rows when a quad really contains a pole. Recorder cost went from ~12.6 ms to ~2 ms per frame (Landsat TIRS, measured).
+**Breaks if:** the cloud quantum is removed (6× more cloud evaluations) or `markQuad` goes back to an 80° latitude threshold (scans all 720 columns for every high-latitude quad).
+
+## Record button lives in the Results card (2026-10-02)
+**What:** Record / Stop / Clear sit in the Results card under the 3D view; the map no longer shows a REC stats badge (it duplicated the Results tiles). Results labels may wrap so names like "Earth covered" are never cut.

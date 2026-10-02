@@ -8,6 +8,10 @@
 
 const DEG = Math.PI / 180;
 const KM_PER_DEG = 111.32;
+// Cloud positions are evaluated on a 2-min time grid: drift in 2 min is <= ~1.7 km (invisible,
+// far below puff sizes) and consecutive 20 s swath rows share one evaluation (50k× warp).
+const TIME_QUANTUM_MS = 120000;
+const BAND_DEG = 10; // latitude bands for the isCloudy lookup index
 
 function mulberry32(seed) {
   return () => {
@@ -73,13 +77,14 @@ export function createCloudField(cfg, radiusKm) {
     return s;
   }
 
-  let lastT = NaN, lastSystems = null;
+  let lastT = NaN, lastSystems = null, lastBands = null;
 
   /**
    * Cloud systems at tMs: [{ latDeg, lonDeg, scale, center, boundCos,
    *   puffs: [{ latDeg, lonDeg, rKm, u, cosR, spin }] }]  (u = unit ECEF)
    */
-  function systemsAt(tMs) {
+  function systemsAt(tMsRaw) {
+    const tMs = Math.floor(tMsRaw / TIME_QUANTUM_MS) * TIME_QUANTUM_MS; // still a pure function of time
     if (tMs === lastT) return lastSystems;
     const tH = tMs / 3.6e6;
     const out = [];
@@ -104,12 +109,23 @@ export function createCloudField(cfg, radiusKm) {
     }
     lastT = tMs;
     lastSystems = out;
+    // Index systems by every latitude band their bounding cap touches
+    lastBands = Array.from({ length: 180 / BAND_DEG }, () => []);
+    for (const sys of out) {
+      const r = Math.acos(sys.boundCos) / DEG;
+      const b0 = Math.max(0, Math.floor((sys.latDeg - r + 90) / BAND_DEG));
+      const b1 = Math.min(lastBands.length - 1, Math.floor((sys.latDeg + r + 90) / BAND_DEG));
+      for (let b = b0; b <= b1; b++) lastBands[b].push(sys);
+    }
     return out;
   }
 
   /** True if the planet-fixed unit vector u is under a cloud at tMs. */
   function isCloudy(u, tMs) {
-    for (const s of systemsAt(tMs)) {
+    systemsAt(tMs);
+    const lat = Math.asin(Math.max(-1, Math.min(1, u[2]))) / DEG;
+    const band = lastBands[Math.min(lastBands.length - 1, Math.floor((lat + 90) / BAND_DEG))];
+    for (const s of band) {
       const c = s.center;
       if (u[0] * c[0] + u[1] * c[1] + u[2] * c[2] < s.boundCos) continue;
       for (const p of s.puffs) {
