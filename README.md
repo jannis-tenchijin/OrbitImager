@@ -7,13 +7,10 @@ The goal is to make the imaging geometry visible: how altitude, field of view an
 change swath width and ground resolution, and how pushbroom vs whiskbroom sensors differ in
 *when* each pixel is recorded.
 
-**Current:** 3D globe with a sun-synchronous satellite (700 km, ~98.2°, LTDN 10:30 mean solar time),
-2D ground-track map with the recorded swath, thermal (Landsat TIRS-like) and visual (OLI-like) sensor presets,
-an FOV slider (fixed detector array → focal length changes), live FOV/IFOV/GSD/swath, and a pixel close-up
-comparing ground truth with what the sensor records — animated row by row (pushbroom) or sweep by sweep
-with calibration pauses (whiskbroom). **Record** accumulates a full day of swaths with drifting clouds:
-cells imaged under cloud are marked unusable, the visual sensor records only in daylight, thermal and SAR also at night,
-and SAR sees through clouds with a side-looking swath and nadir gap.
+**Version 1:** 3D globe + 2D ground-track map of a sun-synchronous satellite; real presets (Landsat 8/9,
+GCOM-C, Sentinel-1/2, constellr, SatVu, ALOS-2/4) with pushbroom, whiskbroom, framing and SAR sensors;
+FOV and altitude sliders that drive swath, GSD and timing; a pixel close-up showing how each scan type records;
+drifting clouds that make recorded cells unusable; and **Record** with coverage + per-place revisit statistics.
 
 ## Run locally
 ```bash
