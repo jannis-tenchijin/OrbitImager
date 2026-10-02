@@ -1,5 +1,7 @@
 # Orbit Imager
 
+**▶ Open the live app: [jannis-tenchijin.github.io/OrbitImager](https://jannis-tenchijin.github.io/OrbitImager/)** — runs in the browser, nothing to install.
+
 A stylized, browser-based simulation of how an Earth-imaging satellite captures images.
 The goal is to make the imaging geometry visible: how altitude, field of view and pixel size (IFOV)
 change swath width and ground resolution, and how pushbroom vs whiskbroom sensors differ in
